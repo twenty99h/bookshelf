@@ -1,8 +1,8 @@
 ## Agent skills
 
-Be concise.
-
-How to access components documentation. Go to bits-ui.com/docs/components/{component_name}/llms.txt.
+- Be concise.
+- Prefer FSD in frontend code. Use Feature-Sliced Design Skill if you have no clue how to implement feature.
+- How to access components documentation. Go to bits-ui.com/docs/components/{component_name}/llms.txt.
 
 ### Issue tracker
 
