@@ -1,15 +1,18 @@
 <script lang="ts">
-  import type { ReviewKind } from "@/shared/api";
+  import type { Idea, ReviewKind } from "@/shared/api";
   import { Button, Eyebrow, Surface } from "@/shared/ui";
 
   let {
     kind, title, packageText, response, error, running, authoredFormulation,
     conclusion = $bindable(""), proposedTopic = $bindable(""),
-    onStart, onCancel, onConfirmTopic, onReject, onRefine, onUnchanged, onLater,
+    linkIdeas = [], linkIdeaId = $bindable(""), linkRelation = $bindable("complements"),
+    onStart, onCancel, onConfirmTopic, onConfirmLink, onReject, onRefine, onUnchanged, onLater,
   }: {
     kind: ReviewKind; title: string; packageText: string; response: string; error: string; running: boolean;
     authoredFormulation: string; conclusion?: string; proposedTopic?: string;
+    linkIdeas?: Idea[]; linkIdeaId?: string; linkRelation?: string;
     onStart: () => void; onCancel: () => void; onConfirmTopic: () => void; onReject: () => void;
+    onConfirmLink: () => void;
     onRefine: () => void; onUnchanged: () => void; onLater: () => void;
   } = $props();
 </script>
@@ -26,7 +29,12 @@
     {#if kind === "topicSuggestion"}
       <label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for="proposed-topic">Подтверждаемое название темы</label><input class="w-full rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5 focus:border-leaf focus:outline-none focus:ring-3 focus:ring-focus" id="proposed-topic" bind:value={proposedTopic} /><div class="mt-2.5 flex flex-wrap gap-2"><Button disabled={!proposedTopic.trim()} onclick={onConfirmTopic}>Подтвердить тему</Button><Button onclick={onReject}>Отклонить</Button></div>
     {:else if kind === "linkSuggestion"}
-      <p>Предложение само ничего не меняет. Выберите идею и тип связи в форме выше, затем нажмите «Подтвердить связь».</p><Button onclick={onReject}>Отклонить</Button>
+      <p>Ответ выше — один кандидат. Он ничего не меняет, пока вы не выберете точную идею и связь.</p>
+      <label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for="suggested-link-idea">Связанная идея</label>
+      <select class="w-full rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5" id="suggested-link-idea" bind:value={linkIdeaId}><option value="">Выберите идею из кандидата</option>{#each linkIdeas as idea}<option value={idea.id}>{idea.formulation}</option>{/each}</select>
+      <label class="mb-1.5 mt-3 block text-xs font-bold text-[#4d5861]" for="suggested-link-relation">Тип связи</label>
+      <select class="w-full rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5" id="suggested-link-relation" bind:value={linkRelation}><option value="complements">Дополняет</option><option value="clarifies">Уточняет</option><option value="contradicts">Противоречит</option></select>
+      <div class="mt-2.5 flex flex-wrap gap-2"><Button disabled={!linkIdeaId} onclick={onConfirmLink}>Подтвердить этого кандидата</Button><Button onclick={onReject}>Отклонить</Button></div>
     {:else}
       <label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for="review-conclusion">Мой вывод (необязательно)</label><textarea class="min-h-20 w-full resize-y rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5 focus:border-leaf focus:outline-none focus:ring-3 focus:ring-focus" id="review-conclusion" bind:value={conclusion}></textarea><div class="mt-2.5 flex flex-wrap gap-2"><Button disabled={!authoredFormulation.trim()} onclick={onRefine}>Уточнить своей формулировкой</Button><Button onclick={onUnchanged}>Оставить без изменений</Button><Button onclick={onLater}>Разобрать позже</Button></div>
     {/if}

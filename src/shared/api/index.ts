@@ -16,6 +16,7 @@ export {
   cancelCodexReview,
   startCodexLogin,
   type Book,
+  type CodexStreamEvent,
   type DraftNote,
   type Idea,
   type LibraryAction,

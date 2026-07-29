@@ -1,6 +1,6 @@
 # Bookshelf MVP
 
-Status: complete
+Status: ready-for-human
 
 ## Problem Statement
 

@@ -13,9 +13,11 @@ use tokio::{
     process::{ChildStdout, Command},
     time::{self, Duration},
 };
+use ts_rs::TS;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct CodexStreamEvent {
     pub request_id: String,
     pub kind: &'static str,

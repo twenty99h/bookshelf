@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { Button, Eyebrow, Surface } from "@/shared/ui";
-  import { cancelCodexReview, commandErrorMessage, runCodexReview, type Idea, type LibraryAction, type LibraryState, type ReviewKind } from "@/shared/api";
+  import { cancelCodexReview, commandErrorMessage, runCodexReview, type CodexStreamEvent, type Idea, type LibraryAction, type LibraryState, type ReviewKind } from "@/shared/api";
   import CodexReviewPanel from "./CodexReviewPanel.svelte";
   import RecallPanel from "./RecallPanel.svelte";
 
@@ -10,7 +10,7 @@
     ideaReview: { title: "Проверка идеи", question: "При каких условиях моя формулировка неточна или неприменима?" },
     recallGaps: { title: "Проверка пробелов ответа", question: "Какие существенные пробелы есть в моём ответе без выставления самооценки?" },
     topicSuggestion: { title: "Предложение темы", question: "Предложи одну подходящую тему знаний и объясни связь." },
-    linkSuggestion: { title: "Предложение связи", question: "Есть ли среди перечисленных идей возможный дубль или смысловая связь?" },
+    linkSuggestion: { title: "Предложение связи", question: "Предложи ровно одну наиболее обоснованную смысловую связь с одной из перечисленных идей." },
   };
 
   let { library, run, bookTitle, onLibrary }: { library: LibraryState; run: (action: LibraryAction, success?: string) => Promise<void>; bookTitle: (bookId: string) => string; onLibrary: (state: LibraryState) => void } = $props();
@@ -89,7 +89,7 @@
   }
   async function resolveCurrentReview(decision: "refined" | "unchanged" | "later", authoredFormulation = "") {
     if (!reviewIdea) return;
-    await run({ kind: "resolveReview", ideaId: reviewIdea.id, decision, formulation: authoredFormulation, conclusion: reviewConclusion }, decision === "later" ? "Проверка оставлена в долге изучения" : "Решение по проверке сохранено; полный ответ удалён");
+    await run({ kind: "resolveReview", ideaId: reviewIdea.id, requestKind: reviewKind, decision, formulation: authoredFormulation, conclusion: reviewConclusion }, decision === "later" ? "Проверка оставлена в долге изучения" : "Решение по проверке сохранено; полный ответ удалён");
     if (decision !== "later") { reviewIdea = null; reviewResponse = ""; reviewPackageText = ""; }
   }
   async function confirmTopicSuggestion() {
@@ -99,12 +99,13 @@
     proposedTopic = "";
   }
   async function confirmLink() {
-    if (!selected || !linkedIdeaId) return;
-    await run({ kind: "linkIdeas", fromIdeaId: selected.id, toIdeaId: linkedIdeaId, relation }, "Связь идей подтверждена");
-    if (reviewKind === "linkSuggestion" && reviewIdea?.id === selected.id) await resolveCurrentReview("unchanged");
+    const source = reviewKind === "linkSuggestion" && reviewIdea ? reviewIdea : selected;
+    if (!source || !linkedIdeaId) return;
+    await run({ kind: "linkIdeas", fromIdeaId: source.id, toIdeaId: linkedIdeaId, relation }, "Связь идей подтверждена");
+    if (reviewKind === "linkSuggestion" && reviewIdea?.id === source.id) await resolveCurrentReview("unchanged");
   }
   onMount(() => {
-    void listen<{ requestId: string; kind: string; text: string }>("codex-review-event", (event) => {
+    void listen<CodexStreamEvent>("codex-review-event", (event) => {
       if (event.payload.requestId === reviewRequestId && event.payload.kind === "delta") reviewResponse += event.payload.text;
     }).then((stop) => { eventUnlisten = stop; });
     return () => eventUnlisten?.();
@@ -113,7 +114,7 @@
 
 {#if recallIdea}
   <RecallPanel idea={recallIdea} {library} {run} onReview={(answer) => prepareReview(recallIdea!, "recallGaps", answer)} onClose={() => { recallIdea = null; reviewIdea = null; }} />
-    {#if reviewIdea?.id === recallIdea.id}<CodexReviewPanel kind={reviewKind} title={reviewCopy[reviewKind].title} packageText={reviewPackageText} response={reviewResponse} error={reviewError} running={reviewRunning} authoredFormulation={formulation} bind:conclusion={reviewConclusion} bind:proposedTopic onStart={startReview} onCancel={() => cancelCodexReview(reviewRequestId)} onConfirmTopic={confirmTopicSuggestion} onReject={() => resolveCurrentReview("unchanged")} onRefine={() => resolveCurrentReview("refined", formulation)} onUnchanged={() => resolveCurrentReview("unchanged")} onLater={() => resolveCurrentReview("later")} />{/if}
+    {#if reviewIdea?.id === recallIdea.id}<CodexReviewPanel kind={reviewKind} title={reviewCopy[reviewKind].title} packageText={reviewPackageText} response={reviewResponse} error={reviewError} running={reviewRunning} authoredFormulation={formulation} bind:conclusion={reviewConclusion} bind:proposedTopic linkIdeas={library.ideas.filter((idea) => idea.id !== reviewIdea?.id)} bind:linkIdeaId={linkedIdeaId} bind:linkRelation={relation} onStart={startReview} onCancel={() => cancelCodexReview(reviewRequestId)} onConfirmTopic={confirmTopicSuggestion} onConfirmLink={confirmLink} onReject={() => resolveCurrentReview("unchanged")} onRefine={() => resolveCurrentReview("refined", formulation)} onUnchanged={() => resolveCurrentReview("unchanged")} onLater={() => resolveCurrentReview("later")} />{/if}
 {:else}
   {#if scheduledRecalls.length > 0}
     <section class="mb-5 grid gap-3" aria-label="Запланированные восстановления">
@@ -126,8 +127,8 @@
   {/if}
   <section class="stack">
     {#each library.ideas as idea}
-      {@const pendingReview = library.reviews.find((review) => review.ideaId === idea.id && review.pending)}
-      <Surface><Eyebrow>{bookTitle(idea.bookId)} · {idea.section}</Eyebrow><h2>{idea.formulation}</h2><p>Назначения: {idea.assignments.join(", ")}</p>{#if pendingReview}<p class="rounded-lg bg-leaf-soft px-3 py-2 text-sm"><b>В долге:</b> отложенная проверка ждёт решения.</p>{/if}<div class="card-actions"><Button onclick={() => selectIdea(idea)}>Развить идею</Button><Button onclick={() => startRecall(idea)}>Восстановить знание</Button>{#if pendingReview}<Button variant="primary" onclick={() => prepareReview(idea, pendingReview.requestKind)}>Разобрать отложенную проверку</Button>{:else}<Button onclick={() => prepareReview(idea)}>Проверить идею</Button>{/if}</div><details><summary>Источник и история</summary>{#each idea.fragments as fragment}<blockquote>стр. {fragment.page}: {fragment.excerpt}</blockquote>{/each}{#each idea.versions as version}<p>{new Date(version.savedAt * 1000).toLocaleString("ru")}: {version.formulation}</p>{/each}</details></Surface>
+      {@const pendingReviews = library.reviews.filter((review) => review.ideaId === idea.id && review.pending)}
+      <Surface><Eyebrow>{bookTitle(idea.bookId)} · {idea.section}</Eyebrow><h2>{idea.formulation}</h2><p>Назначения: {idea.assignments.join(", ")}</p>{#if pendingReviews.length}<p class="rounded-lg bg-leaf-soft px-3 py-2 text-sm"><b>В долге:</b> {pendingReviews.length} отложенных проверок ждут решения.</p>{/if}<div class="card-actions"><Button onclick={() => selectIdea(idea)}>Развить идею</Button><Button onclick={() => startRecall(idea)}>Восстановить знание</Button>{#each pendingReviews as pendingReview}<Button variant="primary" onclick={() => prepareReview(idea, pendingReview.requestKind)}>Разобрать: {reviewCopy[pendingReview.requestKind].title}</Button>{/each}{#if pendingReviews.length === 0}<Button onclick={() => prepareReview(idea)}>Проверить идею</Button>{/if}</div><details><summary>Источник и история</summary>{#each idea.fragments as fragment}<blockquote>стр. {fragment.page}: {fragment.excerpt}</blockquote>{/each}{#each idea.versions as version}<p>{new Date(version.savedAt * 1000).toLocaleString("ru")}: {version.formulation}</p>{/each}</details></Surface>
     {/each}
   </section>
 
@@ -143,7 +144,7 @@
     </section>
     <div class="my-[18px] flex flex-wrap items-center gap-2"><Button onclick={() => prepareReview(selected!, "topicSuggestion")}>Предложить тему через Codex</Button><Button onclick={() => prepareReview(selected!, "linkSuggestion")}>Предложить дубль или связь</Button></div>
   {/if}
-  {#if reviewIdea}<CodexReviewPanel kind={reviewKind} title={reviewCopy[reviewKind].title} packageText={reviewPackageText} response={reviewResponse} error={reviewError} running={reviewRunning} authoredFormulation={formulation} bind:conclusion={reviewConclusion} bind:proposedTopic onStart={startReview} onCancel={() => cancelCodexReview(reviewRequestId)} onConfirmTopic={confirmTopicSuggestion} onReject={() => resolveCurrentReview("unchanged")} onRefine={() => resolveCurrentReview("refined", formulation)} onUnchanged={() => resolveCurrentReview("unchanged")} onLater={() => resolveCurrentReview("later")} />{/if}
+  {#if reviewIdea}<CodexReviewPanel kind={reviewKind} title={reviewCopy[reviewKind].title} packageText={reviewPackageText} response={reviewResponse} error={reviewError} running={reviewRunning} authoredFormulation={formulation} bind:conclusion={reviewConclusion} bind:proposedTopic linkIdeas={library.ideas.filter((idea) => idea.id !== reviewIdea?.id)} bind:linkIdeaId={linkedIdeaId} bind:linkRelation={relation} onStart={startReview} onCancel={() => cancelCodexReview(reviewRequestId)} onConfirmTopic={confirmTopicSuggestion} onConfirmLink={confirmLink} onReject={() => resolveCurrentReview("unchanged")} onRefine={() => resolveCurrentReview("refined", formulation)} onUnchanged={() => resolveCurrentReview("unchanged")} onLater={() => resolveCurrentReview("later")} />{/if}
 {/if}
 
 <style>

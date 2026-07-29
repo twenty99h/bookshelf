@@ -23,6 +23,7 @@
     searchLibrary,
     startCodexLogin,
     type Book,
+    type CodexStreamEvent,
     type Idea,
     type LibraryAction,
     type LibraryState,
@@ -72,7 +73,7 @@
   );
 
   onMount(async () => {
-    void listen<{ kind: string; text: string }>("codex-login-event", (event) => {
+    void listen<CodexStreamEvent>("codex-login-event", (event) => {
       if (event.payload.kind !== "deviceCode") return;
       [codexLoginUrl, codexLoginCode] = event.payload.text.split("\n", 2);
     });

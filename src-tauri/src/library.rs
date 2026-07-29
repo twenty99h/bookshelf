@@ -384,6 +384,7 @@ pub enum LibraryAction {
     },
     ResolveReview {
         idea_id: String,
+        request_kind: ReviewKind,
         decision: ReviewDecision,
         formulation: String,
         conclusion: String,
@@ -879,8 +880,9 @@ impl LibraryState {
                         "Codex не вернул текст проверки",
                     ));
                 }
-                self.reviews
-                    .retain(|item| item.idea_id != idea_id || !item.pending);
+                self.reviews.retain(|item| {
+                    item.idea_id != idea_id || item.request_kind != request_kind || !item.pending
+                });
                 self.reviews.push(IdeaReview {
                     id: new_id("review"),
                     idea_id,
@@ -894,6 +896,7 @@ impl LibraryState {
             }
             LibraryAction::ResolveReview {
                 idea_id,
+                request_kind,
                 decision,
                 formulation,
                 conclusion,
@@ -915,20 +918,20 @@ impl LibraryState {
                 let existing = self
                     .reviews
                     .iter()
-                    .find(|item| item.idea_id == idea_id && item.pending)
+                    .find(|item| {
+                        item.idea_id == idea_id && item.request_kind == request_kind && item.pending
+                    })
                     .cloned();
-                self.reviews
-                    .retain(|item| item.idea_id != idea_id || !item.pending);
+                self.reviews.retain(|item| {
+                    item.idea_id != idea_id || item.request_kind != request_kind || !item.pending
+                });
                 self.reviews.push(IdeaReview {
                     id: existing
                         .as_ref()
                         .map(|item| item.id.clone())
                         .unwrap_or_else(|| new_id("review")),
                     idea_id,
-                    request_kind: existing
-                        .as_ref()
-                        .map(|item| item.request_kind)
-                        .unwrap_or(ReviewKind::IdeaReview),
+                    request_kind,
                     response: if decision == ReviewDecision::Later {
                         existing.map(|item| item.response).unwrap_or_default()
                     } else {
@@ -1869,6 +1872,7 @@ mod tests {
         state
             .apply(LibraryAction::ResolveReview {
                 idea_id: "idea".into(),
+                request_kind: ReviewKind::IdeaReview,
                 decision: ReviewDecision::Unchanged,
                 formulation: "".into(),
                 conclusion: "Проверил ограничение".into(),
@@ -1877,6 +1881,43 @@ mod tests {
         assert!(state.reviews[0].response.is_empty());
         assert!(!state.reviews[0].pending);
         assert_eq!(state.reviews[0].decision, ReviewDecision::Unchanged);
+    }
+
+    #[test]
+    fn deferred_review_kinds_do_not_replace_each_other() {
+        let mut state = LibraryState::default();
+        state.ideas.push(Idea::for_test("idea", "book"));
+        for request_kind in [ReviewKind::IdeaReview, ReviewKind::TopicSuggestion] {
+            state
+                .apply(LibraryAction::RecordReviewResponse {
+                    idea_id: "idea".into(),
+                    request_kind,
+                    response: format!("Ответ {request_kind:?}"),
+                })
+                .unwrap();
+        }
+        assert_eq!(
+            state.reviews.iter().filter(|review| review.pending).count(),
+            2
+        );
+
+        state
+            .apply(LibraryAction::ResolveReview {
+                idea_id: "idea".into(),
+                request_kind: ReviewKind::IdeaReview,
+                decision: ReviewDecision::Unchanged,
+                formulation: String::new(),
+                conclusion: String::new(),
+            })
+            .unwrap();
+
+        assert!(state.reviews.iter().any(|review| {
+            review.pending && review.request_kind == ReviewKind::TopicSuggestion
+        }));
+        assert!(!state
+            .reviews
+            .iter()
+            .any(|review| review.pending && review.request_kind == ReviewKind::IdeaReview));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Book } from "./generated/Book";
+import type { CodexStreamEvent } from "./generated/CodexStreamEvent";
 import type { DraftNote } from "./generated/DraftNote";
 import type { Experiment } from "./generated/Experiment";
 import type { Idea } from "./generated/Idea";
@@ -18,7 +19,7 @@ import type { Topic } from "./generated/Topic";
 import type { TransferMaterial } from "./generated/TransferMaterial";
 
 export type {
-  Book, DraftNote, Experiment, Idea, IdeaLink, IdeaReview, LibraryAction,
+  Book, CodexStreamEvent, DraftNote, Experiment, Idea, IdeaLink, IdeaReview, LibraryAction,
   LibraryState, OutlineItem, Recall, Retrospective, ReviewDecision, ReviewKind,
   SearchResult, StudySession, Topic, TransferMaterial,
 };

@@ -18,3 +18,5 @@ Status: resolved
 ## Answer
 
 Topic confirmation is one domain action, pending review cards reopen the response, and every snapshot/archive is derived from a transient-response-scrubbed state. Regression tests cover assignment and scrubbing.
+
+Second-pass review also found cross-kind replacement. Pending responses are now keyed and resolved by `(idea, review kind)`, all deferred kinds remain visible, and a regression test protects concurrent review debt. Link review asks for one candidate and requires an explicit idea/relation confirmation in the response panel.
