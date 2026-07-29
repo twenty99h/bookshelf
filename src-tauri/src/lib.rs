@@ -1,8 +1,8 @@
-mod codex;
+mod adapters;
 mod library;
 
-use codex::{CodexAdapter, CodexError, CodexStreamEvent};
-use library::{Library, LibraryAction, LibraryError, LibraryState, SearchResult};
+use adapters::codex::{CodexAdapter, CodexError, CodexStreamEvent};
+use library::{Library, LibraryAction, LibraryError, LibraryState, ReviewKind, SearchResult};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -266,10 +266,16 @@ async fn run_codex_review(
     app: tauri::AppHandle,
     request_id: String,
     idea_id: String,
-    request_kind: String,
+    request_kind: ReviewKind,
     package: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LibraryState, CommandError> {
+    state
+        .library
+        .lock()
+        .map_err(|_| CommandError::library_access())?
+        .validate_review_request(&request_id, &idea_id, &package)
+        .map_err(CommandError::from_library)?;
     let cancellation = Arc::new(AtomicBool::new(false));
     state
         .codex_cancellations

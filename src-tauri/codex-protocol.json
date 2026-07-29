@@ -1,0 +1,22 @@
+{
+  "transport": "stdio-jsonl",
+  "methods": [
+    "initialize",
+    "initialized",
+    "account/login/start",
+    "account/login/completed",
+    "thread/start",
+    "turn/start",
+    "turn/interrupt",
+    "item/agentMessage/delta",
+    "turn/completed"
+  ],
+  "responseFields": [
+    "verificationUrl",
+    "userCode",
+    "threadId",
+    "turnId",
+    "delta",
+    "status"
+  ]
+}

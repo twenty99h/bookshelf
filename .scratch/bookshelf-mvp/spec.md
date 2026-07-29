@@ -1,6 +1,6 @@
 # Bookshelf MVP
 
-Status: ready-for-agent
+Status: complete
 
 ## Problem Statement
 

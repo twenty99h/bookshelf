@@ -35,9 +35,11 @@ jobs:
           if ($actual -ne $env:CODEX_SIDECAR_SHA256.ToLowerInvariant()) { throw "Codex sidecar checksum mismatch" }
           & $target --version
           & $target app-server generate-json-schema --out src-tauri/codex-schema
+          node scripts/check-codex-schema.mjs src-tauri/codex-schema
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: git diff --exit-code -- src/shared/api/generated
       - run: pnpm check
       - run: pnpm test
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: pnpm tauri build --bundles nsis
       - name: Smoke install and launch without development tools on PATH
         shell: pwsh
@@ -52,8 +54,22 @@ jobs:
           $process = Start-Process $app.FullName -PassThru
           Start-Sleep -Seconds 8
           if ($process.HasExited) { throw "Bookshelf exited during desktop smoke test" }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $image = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+          $graphics = [System.Drawing.Graphics]::FromImage($image)
+          $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+          $image.Save("$PWD/artifacts/bookshelf-release-candidate.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $graphics.Dispose()
+          $image.Dispose()
           Stop-Process -Id $process.Id
           $env:PATH = $oldPath
+          $uninstaller = Get-ChildItem $app.DirectoryName -Filter "uninstall.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $uninstaller) { throw "Bookshelf uninstaller not found" }
+          $uninstall = Start-Process $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path $app.FullName)) { throw "Bookshelf uninstall smoke failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: bookshelf-signed-windows-candidate
@@ -61,11 +77,16 @@ jobs:
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/*.sig
             src-tauri/target/release/bundle/nsis/*latest.json
+            artifacts/bookshelf-release-candidate.png
 
   portable-pair-check:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-24.04]
+        include:
+          - os: macos-latest
+            bundle: app
+          - os: ubuntu-24.04
+            bundle: appimage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -81,5 +102,26 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check && pnpm test && pnpm build
+      - name: Prepare pinned platform Codex sidecar
+        shell: bash
+        env:
+          CODEX_SIDECAR_URL: ${{ runner.os == 'macOS' && secrets.CODEX_SIDECAR_MACOS_URL || secrets.CODEX_SIDECAR_LINUX_URL }}
+          CODEX_SIDECAR_SHA256: ${{ runner.os == 'macOS' && secrets.CODEX_SIDECAR_MACOS_SHA256 || secrets.CODEX_SIDECAR_LINUX_SHA256 }}
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          mkdir -p src-tauri/binaries
+          target="src-tauri/binaries/codex-$host"
+          curl --fail --location "$CODEX_SIDECAR_URL" --output "$target"
+          echo "$CODEX_SIDECAR_SHA256  $target" | shasum -a 256 --check
+          chmod +x "$target"
+          "$target" --version
+          "$target" app-server generate-json-schema --out src-tauri/codex-schema
+          node scripts/check-codex-schema.mjs src-tauri/codex-schema
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: git diff --exit-code -- src/shared/api/generated
+      - run: pnpm check && pnpm test && pnpm build
+      - name: Build paired desktop candidate
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":["binaries/codex"]}}'
+        run: pnpm tauri build --debug --bundles ${{ matrix.bundle }}

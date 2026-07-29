@@ -13,7 +13,7 @@
     initialScroll?: number;
     onPosition: (page: number, zoom: number, scroll: number) => void;
     onSelection: (excerpt: string, context: string) => void;
-    onOutline: (outline: { id: string; title: string; page: number; parentId: null }[]) => void;
+    onOutline: (outline: { id: string; title: string; page: number; parentId: string | null }[]) => void;
   } = $props();
   let canvas: HTMLCanvasElement;
   let textLayerContainer: HTMLDivElement;
@@ -22,7 +22,7 @@
   let page = $state(1);
   let zoom = $state(1);
   let pageCount = $state(0);
-  let embeddedOutline = $state<{ id: string; title: string; page: number; parentId: null }[]>([]);
+  let embeddedOutline = $state<{ id: string; title: string; page: number; parentId: string | null }[]>([]);
   let navigationOutline = $derived(savedOutline.length > 0 ? savedOutline : embeddedOutline);
   let error = $state("");
   let rendering = false;
@@ -55,14 +55,23 @@
   async function readOutline(pdf: PDFDocumentProxy) {
     const items = await pdf.getOutline();
     if (!items) return [];
-    const resolved = await Promise.all(items.map(async (item, index) => {
-      try {
-        const destination = typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
-        if (!destination) return null;
-        return { id: `pdf-${index}-${(await pdf.getPageIndex(destination[0])) + 1}`, title: item.title, page: (await pdf.getPageIndex(destination[0])) + 1, parentId: null };
-      } catch { return null; }
-    }));
-    return resolved.filter((item): item is { id: string; title: string; page: number; parentId: null } => item !== null);
+    const resolved: { id: string; title: string; page: number; parentId: string | null }[] = [];
+    async function visit(nodes: typeof items, parentId: string | null) {
+      for (const item of nodes) {
+        let itemId = parentId;
+        try {
+          const destination = typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
+          if (destination) {
+            const page = (await pdf.getPageIndex(destination[0])) + 1;
+            itemId = `pdf-${resolved.length}-${page}`;
+            resolved.push({ id: itemId, title: item.title, page, parentId });
+          }
+        } catch { /* A broken destination must not hide valid nested entries. */ }
+        if (item.items.length > 0) await visit(item.items, itemId);
+      }
+    }
+    await visit(items, null);
+    return resolved;
   }
 
   async function renderPage() {

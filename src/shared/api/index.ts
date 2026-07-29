@@ -20,5 +20,6 @@ export {
   type Idea,
   type LibraryAction,
   type LibraryState,
+  type ReviewKind,
   type SearchResult,
 } from "./library";

@@ -9,11 +9,13 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+use ts_rs::TS;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(default, rename_all = "camelCase")]
+#[ts(export)]
 pub struct LibraryState {
     pub books: Vec<Book>,
     pub drafts: Vec<DraftNote>,
@@ -34,7 +36,7 @@ pub struct LibraryState {
     pub debt_reminder_days: u16,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Book {
     pub id: String,
@@ -60,7 +62,7 @@ impl Book {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OutlineItem {
     pub id: String,
@@ -69,7 +71,7 @@ pub struct OutlineItem {
     pub parent_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadingPosition {
     pub page: u32,
@@ -87,7 +89,7 @@ impl Default for ReadingPosition {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftNote {
     pub id: String,
@@ -113,7 +115,7 @@ impl DraftNote {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Idea {
     pub id: String,
@@ -140,7 +142,7 @@ impl Idea {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceFragment {
     pub page: u32,
@@ -148,21 +150,21 @@ pub struct SourceFragment {
     pub context: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IdeaVersion {
     pub formulation: String,
     pub saved_at: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Topic {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IdeaLink {
     pub id: String,
@@ -171,7 +173,7 @@ pub struct IdeaLink {
     pub relation: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Experiment {
     pub id: String,
@@ -184,7 +186,7 @@ pub struct Experiment {
     pub completed: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Recall {
     pub id: String,
@@ -194,7 +196,7 @@ pub struct Recall {
     pub next_at: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct StudySession {
     pub id: String,
@@ -205,7 +207,7 @@ pub struct StudySession {
     pub debt_at_start: usize,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferMaterial {
     pub id: String,
@@ -218,20 +220,40 @@ pub struct TransferMaterial {
     pub idea_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct IdeaReview {
     pub id: String,
     pub idea_id: String,
-    pub request_kind: String,
+    pub request_kind: ReviewKind,
     pub response: String,
-    pub decision: String,
+    pub decision: ReviewDecision,
     pub conclusion: String,
     pub pending: bool,
     pub reviewed_at: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewKind {
+    #[default]
+    IdeaReview,
+    RecallGaps,
+    TopicSuggestion,
+    LinkSuggestion,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewDecision {
+    #[default]
+    Pending,
+    Refined,
+    Unchanged,
+    Later,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Retrospective {
     pub text: String,
@@ -240,8 +262,13 @@ pub struct Retrospective {
     pub debt_decision: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[ts(export)]
 pub enum LibraryAction {
     SaveWorkspaceNote {
         note: String,
@@ -289,6 +316,9 @@ pub enum LibraryAction {
     SetDebtReminder {
         days: u16,
     },
+    StartSession {
+        session_id: String,
+    },
     PlanSession {
         intention: String,
         planned_at: u64,
@@ -310,6 +340,10 @@ pub enum LibraryAction {
         idea_id: String,
         topic_id: String,
     },
+    ConfirmSuggestedTopic {
+        idea_id: String,
+        name: String,
+    },
     LinkIdeas {
         from_idea_id: String,
         to_idea_id: String,
@@ -327,7 +361,12 @@ pub enum LibraryAction {
         idea_id: String,
         answer: String,
         rating: String,
+        #[ts(optional = nullable)]
         next_at: Option<u64>,
+    },
+    RescheduleRecall {
+        recall_id: String,
+        next_at: u64,
     },
     SaveMaterial {
         title: String,
@@ -340,12 +379,12 @@ pub enum LibraryAction {
     },
     RecordReviewResponse {
         idea_id: String,
-        request_kind: String,
+        request_kind: ReviewKind,
         response: String,
     },
     ResolveReview {
         idea_id: String,
-        decision: String,
+        decision: ReviewDecision,
         formulation: String,
         conclusion: String,
     },
@@ -595,8 +634,24 @@ impl LibraryState {
                     planned_at,
                     status: "planned".into(),
                     resolution_reason: String::new(),
-                    debt_at_start: self.debt(),
+                    debt_at_start: 0,
                 });
+            }
+            LibraryAction::StartSession { session_id } => {
+                let debt_at_start = self.debt();
+                let session = self
+                    .sessions
+                    .iter_mut()
+                    .find(|item| item.id == session_id)
+                    .ok_or_else(|| DomainError::new("session_not_found", "Сеанс не найден"))?;
+                if session.status != "planned" {
+                    return Err(DomainError::new(
+                        "session_already_started",
+                        "Этот сеанс уже начат или завершён",
+                    ));
+                }
+                session.status = "active".into();
+                session.debt_at_start = debt_at_start;
             }
             LibraryAction::ResolveSession {
                 session_id,
@@ -620,6 +675,12 @@ impl LibraryState {
                     .iter_mut()
                     .find(|item| item.id == session_id)
                     .ok_or_else(|| DomainError::new("session_not_found", "Сеанс не найден"))?;
+                if status == "completed" && session.status != "active" {
+                    return Err(DomainError::new(
+                        "session_not_started",
+                        "Сначала начните сеанс, чтобы измерить изменение долга",
+                    ));
+                }
                 session.status = status;
                 session.resolution_reason = reason;
             }
@@ -664,6 +725,21 @@ impl LibraryState {
                 if !idea.topic_ids.contains(&topic_id) {
                     idea.topic_ids.push(topic_id);
                 }
+            }
+            LibraryAction::ConfirmSuggestedTopic { idea_id, name } => {
+                find_idea(self, &idea_id)?;
+                if name.trim().is_empty() {
+                    return Err(DomainError::new(
+                        "topic_name_required",
+                        "Назовите тему знаний",
+                    ));
+                }
+                let topic_id = new_id("topic");
+                self.topics.push(Topic {
+                    id: topic_id.clone(),
+                    name,
+                });
+                find_idea_mut(self, &idea_id)?.topic_ids.push(topic_id);
             }
             LibraryAction::LinkIdeas {
                 from_idea_id,
@@ -749,6 +825,22 @@ impl LibraryState {
                     next_at: next_at.unwrap_or_else(|| now() + suggested_days * 86_400),
                 });
             }
+            LibraryAction::RescheduleRecall { recall_id, next_at } => {
+                if next_at == 0 {
+                    return Err(DomainError::new(
+                        "recall_schedule_invalid",
+                        "Выберите дату следующего восстановления",
+                    ));
+                }
+                let recall = self
+                    .recalls
+                    .iter_mut()
+                    .find(|item| item.id == recall_id)
+                    .ok_or_else(|| {
+                        DomainError::new("recall_not_found", "Восстановление не найдено")
+                    })?;
+                recall.next_at = next_at;
+            }
             LibraryAction::SaveMaterial {
                 title,
                 problem,
@@ -794,7 +886,7 @@ impl LibraryState {
                     idea_id,
                     request_kind,
                     response,
-                    decision: String::new(),
+                    decision: ReviewDecision::Pending,
                     conclusion: String::new(),
                     pending: true,
                     reviewed_at: now(),
@@ -807,13 +899,13 @@ impl LibraryState {
                 conclusion,
             } => {
                 find_idea(self, &idea_id)?;
-                if !["refined", "unchanged", "later"].contains(&decision.as_str()) {
+                if decision == ReviewDecision::Pending {
                     return Err(DomainError::new(
                         "review_decision_invalid",
                         "Выберите решение по проверке",
                     ));
                 }
-                if decision == "refined" {
+                if decision == ReviewDecision::Refined {
                     self.apply(LibraryAction::UpdateIdea {
                         idea_id: idea_id.clone(),
                         formulation,
@@ -835,16 +927,16 @@ impl LibraryState {
                     idea_id,
                     request_kind: existing
                         .as_ref()
-                        .map(|item| item.request_kind.clone())
-                        .unwrap_or_else(|| "ideaReview".into()),
-                    response: if decision == "later" {
+                        .map(|item| item.request_kind)
+                        .unwrap_or(ReviewKind::IdeaReview),
+                    response: if decision == ReviewDecision::Later {
                         existing.map(|item| item.response).unwrap_or_default()
                     } else {
                         String::new()
                     },
-                    decision: decision.clone(),
+                    decision,
                     conclusion,
-                    pending: decision == "later",
+                    pending: decision == ReviewDecision::Later,
                     reviewed_at: now(),
                 });
             }
@@ -972,6 +1064,69 @@ impl Library {
             .map_err(sqlite_io)?;
         json.map(|value| serde_json::from_str(&value).map_err(io::Error::other))
             .unwrap_or_else(|| Ok(LibraryState::default()))
+    }
+
+    pub fn validate_review_request(
+        &self,
+        request_id: &str,
+        idea_id: &str,
+        package: &str,
+    ) -> Result<(), LibraryError> {
+        let valid_request_id = (16..=64).contains(&request_id.len())
+            && request_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+        if !valid_request_id {
+            return Err(DomainError::new(
+                "codex_request_invalid",
+                "Некорректный идентификатор проверки",
+            )
+            .into());
+        }
+        if package.trim().is_empty() || package.chars().count() > 20_000 {
+            return Err(DomainError::new(
+                "codex_package_invalid",
+                "Пакет проверки пуст или слишком велик",
+            )
+            .into());
+        }
+        let state = self.load()?;
+        let idea = find_idea(&state, idea_id)?;
+        let book = find_book(&state, &idea.book_id)?;
+        if !package.contains(&idea.formulation)
+            || !package.contains(&idea.section)
+            || !package.contains(&book.title)
+        {
+            return Err(DomainError::new(
+                "codex_package_mismatch",
+                "Пакет не соответствует выбранной идее и источнику",
+            )
+            .into());
+        }
+        let leaks_workspace_note = !state.workspace_note.trim().is_empty()
+            && package.contains(state.workspace_note.trim());
+        let leaks_file_path = state
+            .books
+            .iter()
+            .any(|candidate| package.contains(&candidate.stored_file));
+        let leaks_experiment = state.experiments.iter().any(|experiment| {
+            [
+                &experiment.situation,
+                &experiment.action,
+                &experiment.result,
+                &experiment.conclusion,
+            ]
+            .into_iter()
+            .any(|value| value.chars().count() >= 8 && package.contains(value))
+        });
+        if leaks_workspace_note || leaks_file_path || leaks_experiment {
+            return Err(DomainError::new(
+                "codex_package_discloses_private_state",
+                "Пакет содержит состояние, не относящееся к выбранной проверке",
+            )
+            .into());
+        }
+        Ok(())
     }
 
     pub fn absolute_book_path(&self, stored_file: &str) -> PathBuf {
@@ -1123,7 +1278,7 @@ impl Library {
         let mut archive = tar::Builder::new(encrypted);
         let manifest = ArchiveManifest {
             version: 1,
-            state: self.load()?,
+            state: without_transient_ai(self.load()?),
         };
         append_bytes(
             &mut archive,
@@ -1327,7 +1482,11 @@ impl Library {
     fn create_snapshot(&self, state: &LibraryState) -> io::Result<()> {
         let dir = self.data_dir.join("snapshots");
         let path = dir.join(format!("snapshot-{}.json", unique_number()));
-        atomic_write(&path, &serde_json::to_vec(state).map_err(io::Error::other)?)?;
+        let snapshot = without_transient_ai(state.clone());
+        atomic_write(
+            &path,
+            &serde_json::to_vec(&snapshot).map_err(io::Error::other)?,
+        )?;
         let mut snapshots: Vec<_> = fs::read_dir(&dir)?.filter_map(Result::ok).collect();
         snapshots.sort_by_key(|entry| entry.file_name());
         let remove_count = snapshots.len().saturating_sub(5);
@@ -1390,8 +1549,16 @@ impl Library {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+fn without_transient_ai(mut state: LibraryState) -> LibraryState {
+    for review in &mut state.reviews {
+        review.response.clear();
+    }
+    state
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct SearchResult {
     pub id: String,
     pub kind: String,
@@ -1692,7 +1859,7 @@ mod tests {
         state
             .apply(LibraryAction::RecordReviewResponse {
                 idea_id: "idea".into(),
-                request_kind: "ideaReview".into(),
+                request_kind: ReviewKind::IdeaReview,
                 response: "Возможный пробел".into(),
             })
             .unwrap();
@@ -1702,18 +1869,18 @@ mod tests {
         state
             .apply(LibraryAction::ResolveReview {
                 idea_id: "idea".into(),
-                decision: "unchanged".into(),
+                decision: ReviewDecision::Unchanged,
                 formulation: "".into(),
                 conclusion: "Проверил ограничение".into(),
             })
             .unwrap();
         assert!(state.reviews[0].response.is_empty());
         assert!(!state.reviews[0].pending);
-        assert_eq!(state.reviews[0].decision, "unchanged");
+        assert_eq!(state.reviews[0].decision, ReviewDecision::Unchanged);
     }
 
     #[test]
-    fn completing_a_session_reports_debt_change_since_it_was_planned() {
+    fn completing_a_session_reports_debt_change_since_it_started() {
         let data_dir = test_data_dir();
         let library = Library::open(&data_dir).unwrap();
         let mut state = LibraryState::default();
@@ -1732,6 +1899,21 @@ mod tests {
                 section: "Глава".into(),
                 page: 1,
                 excerpt: "Фрагмент".into(),
+                context: "".into(),
+                comment: "".into(),
+            })
+            .unwrap();
+        library
+            .apply(LibraryAction::StartSession {
+                session_id: session_id.clone(),
+            })
+            .unwrap();
+        library
+            .apply(LibraryAction::CaptureDraft {
+                book_id: "book".into(),
+                section: "Глава".into(),
+                page: 2,
+                excerpt: "Второй фрагмент".into(),
                 context: "".into(),
                 comment: "".into(),
             })
@@ -1798,6 +1980,40 @@ mod tests {
         library.replace_state(&state).unwrap();
         assert_eq!(library.claim_debt_notification().unwrap(), Some(1));
         assert_eq!(library.claim_debt_notification().unwrap(), None);
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn confirmed_topic_suggestion_is_assigned_atomically() {
+        let mut state = LibraryState::default();
+        state.ideas.push(Idea::for_test("idea", "book"));
+        state
+            .apply(LibraryAction::ConfirmSuggestedTopic {
+                idea_id: "idea".into(),
+                name: "Надёжность".into(),
+            })
+            .unwrap();
+        assert_eq!(state.topics.len(), 1);
+        assert_eq!(state.ideas[0].topic_ids, vec![state.topics[0].id.clone()]);
+    }
+
+    #[test]
+    fn snapshots_do_not_make_full_ai_responses_permanent() {
+        let data_dir = test_data_dir();
+        let library = Library::open(&data_dir).unwrap();
+        let mut state = LibraryState::default();
+        state.books.push(Book::for_test("book", "Книга"));
+        state.ideas.push(Idea::for_test("idea", "book"));
+        state
+            .apply(LibraryAction::RecordReviewResponse {
+                idea_id: "idea".into(),
+                request_kind: ReviewKind::IdeaReview,
+                response: "Временный полный ответ".into(),
+            })
+            .unwrap();
+        library.create_snapshot(&state).unwrap();
+        let restored = library.restore_latest_snapshot().unwrap();
+        assert!(restored.reviews[0].response.is_empty());
         fs::remove_dir_all(data_dir).unwrap();
     }
 

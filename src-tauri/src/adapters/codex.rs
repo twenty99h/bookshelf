@@ -50,7 +50,7 @@ impl CodexAdapter {
         fs::create_dir_all(&state_dir)?;
         fs::create_dir_all(&workspace_dir)?;
         Ok(Self {
-            executable: codex_executable(),
+            executable: codex_executable()?,
             state_dir,
             workspace_dir,
         })
@@ -69,38 +69,7 @@ impl CodexAdapter {
                 "Пакет проверки пуст",
             ));
         }
-        let mut child = Command::new(&self.executable)
-            .arg("app-server")
-            .arg("--listen")
-            .arg("stdio://")
-            .env("CODEX_HOME", &self.state_dir)
-            .current_dir(&self.workspace_dir)
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|error| {
-                CodexError::new(
-                    "codex_sidecar_missing",
-                    format!("Bundled Codex не найден или не запускается: {error}"),
-                )
-            })?;
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            CodexError::new("codex_protocol_failed", "Codex не открыл канал команд")
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            CodexError::new("codex_protocol_failed", "Codex не открыл поток ответа")
-        })?;
-        let mut lines = BufReader::new(stdout).lines();
-
-        send(&mut stdin, json!({
-            "method": "initialize",
-            "id": 1,
-            "params": { "clientInfo": { "name": "bookshelf", "title": "Bookshelf", "version": env!("CARGO_PKG_VERSION") } }
-        })).await?;
-        response(&mut lines, 1).await?;
-        send(&mut stdin, json!({ "method": "initialized", "params": {} })).await?;
+        let (_child, mut stdin, mut lines) = self.connect().await?;
         send(
             &mut stdin,
             json!({
@@ -219,33 +188,7 @@ impl CodexAdapter {
     }
 
     pub async fn login(&self, emit: impl Fn(CodexStreamEvent)) -> Result<(), CodexError> {
-        let mut child = Command::new(&self.executable)
-            .arg("app-server")
-            .arg("--listen")
-            .arg("stdio://")
-            .env("CODEX_HOME", &self.state_dir)
-            .current_dir(&self.workspace_dir)
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|error| {
-                CodexError::new(
-                    "codex_sidecar_missing",
-                    format!("Bundled Codex не найден или не запускается: {error}"),
-                )
-            })?;
-        let mut stdin = child.stdin.take().ok_or_else(|| {
-            CodexError::new("codex_protocol_failed", "Codex не открыл канал команд")
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            CodexError::new("codex_protocol_failed", "Codex не открыл поток ответа")
-        })?;
-        let mut lines = BufReader::new(stdout).lines();
-        send(&mut stdin, json!({"method":"initialize","id":1,"params":{"clientInfo":{"name":"bookshelf","title":"Bookshelf","version":env!("CARGO_PKG_VERSION")}}})).await?;
-        response(&mut lines, 1).await?;
-        send(&mut stdin, json!({"method":"initialized","params":{}})).await?;
+        let (_child, mut stdin, mut lines) = self.connect().await?;
         send(
             &mut stdin,
             json!({"method":"account/login/start","id":2,"params":{"type":"chatgptDeviceCode"}}),
@@ -297,6 +240,46 @@ impl CodexAdapter {
                     .unwrap_or("Вход в Codex не завершён"),
             ));
         }
+    }
+
+    async fn connect(
+        &self,
+    ) -> Result<
+        (
+            tokio::process::Child,
+            tokio::process::ChildStdin,
+            Lines<BufReader<ChildStdout>>,
+        ),
+        CodexError,
+    > {
+        let mut child = Command::new(&self.executable)
+            .arg("app-server")
+            .arg("--listen")
+            .arg("stdio://")
+            .env("CODEX_HOME", &self.state_dir)
+            .current_dir(&self.workspace_dir)
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                CodexError::new(
+                    "codex_sidecar_missing",
+                    format!("Bundled Codex не найден или не запускается: {error}"),
+                )
+            })?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            CodexError::new("codex_protocol_failed", "Codex не открыл канал команд")
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            CodexError::new("codex_protocol_failed", "Codex не открыл поток ответа")
+        })?;
+        let mut lines = BufReader::new(stdout).lines();
+        send(&mut stdin, json!({"method":"initialize","id":1,"params":{"clientInfo":{"name":"bookshelf","title":"Bookshelf","version":env!("CARGO_PKG_VERSION")}}})).await?;
+        response(&mut lines, 1).await?;
+        send(&mut stdin, json!({"method":"initialized","params":{}})).await?;
+        Ok((child, stdin, lines))
     }
 }
 
@@ -386,20 +369,24 @@ fn stream_message(value: &Value) -> StreamMessage<'_> {
     }
 }
 
-fn codex_executable() -> PathBuf {
+fn codex_executable() -> io::Result<PathBuf> {
+    #[cfg(debug_assertions)]
     if let Some(path) = env::var_os("BOOKSHELF_CODEX_SIDECAR") {
-        return path.into();
+        return Ok(path.into());
     }
     if let Ok(current) = env::current_exe() {
         let name = if cfg!(windows) { "codex.exe" } else { "codex" };
         if let Some(parent) = current.parent() {
             let bundled = parent.join(name);
             if bundled.exists() {
-                return bundled;
+                return Ok(bundled);
             }
         }
     }
-    PathBuf::from(if cfg!(windows) { "codex.exe" } else { "codex" })
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "bundled Codex sidecar is missing",
+    ))
 }
 
 #[cfg(test)]
