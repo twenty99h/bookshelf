@@ -12,6 +12,7 @@ export {
   searchLibrary,
   saveWorkspaceNote,
   restoreLatestSnapshot,
+  prepareCodexReview,
   runCodexReview,
   cancelCodexReview,
   startCodexLogin,

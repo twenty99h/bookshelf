@@ -78,21 +78,32 @@ test("Codex receives only the review package after explicit confirmation", async
     experiments: [{ id: "experiment-1", ideaId: "idea-1", situation: "SECRET EXPERIMENT", action: "", result: "", conclusion: "", successful: false, completed: false }],
     workspaceNote: "SECRET NOTE",
   };
-  invokeMock.mockResolvedValue(state);
+  const generatedPackage = [
+    "Источник: Надёжные системы, Глава 3, стр. 42",
+    "Выбранный фрагмент: Failure is part of the design",
+    "Авторская формулировка: Отказы нужно проектировать явно",
+  ].join("\n\n");
+  invokeMock.mockImplementation(async (command) => command === "prepare_codex_review" ? generatedPackage : state);
   render(LibraryPage);
 
   await fireEvent.click(await screen.findByRole("button", { name: /^Идеи/ }));
   await fireEvent.click(screen.getByRole("button", { name: "Проверить идею" }));
-  expect(invokeMock).toHaveBeenCalledTimes(1);
+  expect(invokeMock).toHaveBeenCalledWith("prepare_codex_review", {
+    ideaId: "idea-1",
+    requestKind: "ideaReview",
+    recallAnswer: undefined,
+  });
   expect(screen.getByText(/Полный PDF, эксперименты и другие заметки не добавляются/)).toBeTruthy();
+  expect(await screen.findByText((_, element) => element?.tagName === "PRE" && element.textContent === generatedPackage)).toBeTruthy();
 
   await fireEvent.click(screen.getByRole("button", { name: "Подтвердить и отправить" }));
   const reviewCall = invokeMock.mock.calls.find(([command]) => command === "run_codex_review");
   expect(reviewCall).toBeTruthy();
-  const payload = reviewCall?.[1] as { package: string };
-  expect(payload.package).toContain("Отказы нужно проектировать явно");
-  expect(payload.package).toContain("Failure is part of the design");
-  expect(payload.package).not.toContain("SECRET NOTE");
-  expect(payload.package).not.toContain("SECRET EXPERIMENT");
-  expect(payload.package).not.toContain("secret nearby context");
+  expect(reviewCall?.[1]).toEqual({
+    requestId: expect.any(String),
+    ideaId: "idea-1",
+    requestKind: "ideaReview",
+    recallAnswer: undefined,
+    approvedPackage: generatedPackage,
+  });
 });

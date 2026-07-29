@@ -1069,12 +1069,7 @@ impl Library {
             .unwrap_or_else(|| Ok(LibraryState::default()))
     }
 
-    pub fn validate_review_request(
-        &self,
-        request_id: &str,
-        idea_id: &str,
-        package: &str,
-    ) -> Result<(), LibraryError> {
+    pub fn validate_review_request_id(&self, request_id: &str) -> Result<(), LibraryError> {
         let valid_request_id = (16..=64).contains(&request_id.len())
             && request_id
                 .bytes()
@@ -1086,50 +1081,98 @@ impl Library {
             )
             .into());
         }
-        if package.trim().is_empty() || package.chars().count() > 20_000 {
+        Ok(())
+    }
+
+    pub fn prepare_review_package(
+        &self,
+        idea_id: &str,
+        request_kind: ReviewKind,
+        recall_answer: Option<&str>,
+    ) -> Result<String, LibraryError> {
+        if recall_answer.is_some_and(|answer| answer.chars().count() > 10_000) {
             return Err(DomainError::new(
                 "codex_package_invalid",
-                "Пакет проверки пуст или слишком велик",
+                "Ответ для проверки слишком велик",
             )
             .into());
         }
         let state = self.load()?;
         let idea = find_idea(&state, idea_id)?;
         let book = find_book(&state, &idea.book_id)?;
-        if !package.contains(&idea.formulation)
-            || !package.contains(&idea.section)
-            || !package.contains(&book.title)
-        {
-            return Err(DomainError::new(
-                "codex_package_mismatch",
-                "Пакет не соответствует выбранной идее и источнику",
+        let fragment = idea.fragments.first();
+        let source = format!(
+            "Источник: {}, {}{}",
+            book.title,
+            idea.section,
+            fragment
+                .map(|fragment| format!(", стр. {}", fragment.page))
+                .unwrap_or_default()
+        );
+        let related = (request_kind == ReviewKind::LinkSuggestion).then(|| {
+            let candidates = state
+                .ideas
+                .iter()
+                .filter(|candidate| candidate.id != idea.id)
+                .map(|candidate| candidate.formulation.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!(
+                "Кандидаты для сравнения: {}",
+                if candidates.is_empty() {
+                    "нет"
+                } else {
+                    &candidates
+                }
             )
-            .into());
-        }
-        let leaks_workspace_note = !state.workspace_note.trim().is_empty()
-            && package.contains(state.workspace_note.trim());
-        let leaks_file_path = state
-            .books
-            .iter()
-            .any(|candidate| package.contains(&candidate.stored_file));
-        let leaks_experiment = state.experiments.iter().any(|experiment| {
-            [
-                &experiment.situation,
-                &experiment.action,
-                &experiment.result,
-                &experiment.conclusion,
-            ]
-            .into_iter()
-            .any(|value| value.chars().count() >= 8 && package.contains(value))
         });
-        if leaks_workspace_note || leaks_file_path || leaks_experiment {
+        let question = match request_kind {
+            ReviewKind::IdeaReview => {
+                "При каких условиях моя формулировка неточна или неприменима?"
+            }
+            ReviewKind::RecallGaps => {
+                "Какие существенные пробелы есть в моём ответе без выставления самооценки?"
+            }
+            ReviewKind::TopicSuggestion => {
+                "Предложи одну подходящую тему знаний и объясни связь."
+            }
+            ReviewKind::LinkSuggestion => {
+                "Предложи ровно одну наиболее обоснованную смысловую связь с одной из перечисленных идей."
+            }
+        };
+        Ok([
+            Some("Инструкция: укажи возможные пробелы и ограничения; не переписывай идею за читателя и не выставляй итоговую оценку.".to_owned()),
+            Some(source),
+            fragment.map(|fragment| format!("Выбранный фрагмент: {}", fragment.excerpt)),
+            Some(format!("Авторская формулировка: {}", idea.formulation)),
+            (request_kind == ReviewKind::RecallGaps)
+                .then(|| format!("Ответ читателя: {}", recall_answer.unwrap_or_default())),
+            related,
+            Some(format!("Вопрос: {question}")),
+            Some("Критерии ответа: точность, существенные ограничения, связь с показанным источником; никаких автоматических изменений.".to_owned()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n\n"))
+    }
+
+    pub fn approve_review_package(
+        &self,
+        idea_id: &str,
+        request_kind: ReviewKind,
+        recall_answer: Option<&str>,
+        approved_package: &str,
+    ) -> Result<String, LibraryError> {
+        let current = self.prepare_review_package(idea_id, request_kind, recall_answer)?;
+        if current != approved_package {
             return Err(DomainError::new(
-                "codex_package_discloses_private_state",
-                "Пакет содержит состояние, не относящееся к выбранной проверке",
+                "codex_package_changed",
+                "Идея или источник изменились после подтверждения. Проверьте пакет ещё раз",
             )
             .into());
         }
-        Ok(())
+        Ok(current)
     }
 
     pub fn absolute_book_path(&self, stored_file: &str) -> PathBuf {
@@ -1881,6 +1924,50 @@ mod tests {
         assert!(state.reviews[0].response.is_empty());
         assert!(!state.reviews[0].pending);
         assert_eq!(state.reviews[0].decision, ReviewDecision::Unchanged);
+    }
+
+    #[test]
+    fn review_package_is_built_from_the_selected_source_without_private_state() {
+        let data_dir = test_data_dir();
+        let library = Library::open(&data_dir).unwrap();
+        let mut state = LibraryState {
+            workspace_note: "SECRET WORKSPACE NOTE".into(),
+            ..LibraryState::default()
+        };
+        state.books.push(Book::for_test("book", "Надёжные системы"));
+        state.ideas.push(Idea {
+            formulation: "Отказы нужно проектировать явно".into(),
+            fragments: vec![SourceFragment {
+                page: 42,
+                excerpt: "Failure is part of the design".into(),
+                context: "SECRET NEARBY CONTEXT".into(),
+            }],
+            ..Idea::for_test("idea", "book")
+        });
+        state.experiments.push(Experiment {
+            idea_id: "idea".into(),
+            situation: "SECRET EXPERIMENT".into(),
+            ..Experiment::default()
+        });
+        library.replace_state(&state).unwrap();
+
+        let package = library
+            .prepare_review_package("idea", ReviewKind::IdeaReview, None)
+            .unwrap();
+
+        assert!(package.contains("Надёжные системы, Глава 1, стр. 42"));
+        assert!(package.contains("Отказы нужно проектировать явно"));
+        assert!(package.contains("Failure is part of the design"));
+        assert!(!package.contains("SECRET WORKSPACE NOTE"));
+        assert!(!package.contains("SECRET EXPERIMENT"));
+        assert!(!package.contains("SECRET NEARBY CONTEXT"));
+        let changed = library
+            .approve_review_package("idea", ReviewKind::IdeaReview, None, "unapproved package")
+            .unwrap_err();
+        assert!(
+            matches!(changed, LibraryError::Domain(ref error) if error.code == "codex_package_changed")
+        );
+        fs::remove_dir_all(data_dir).unwrap();
     }
 
     #[test]

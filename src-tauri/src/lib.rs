@@ -262,20 +262,47 @@ async fn install_signed_update(app: tauri::AppHandle) -> Result<bool, CommandErr
 }
 
 #[tauri::command]
+fn prepare_codex_review(
+    idea_id: String,
+    request_kind: ReviewKind,
+    recall_answer: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, CommandError> {
+    state
+        .library
+        .lock()
+        .map_err(|_| CommandError::library_access())?
+        .prepare_review_package(&idea_id, request_kind, recall_answer.as_deref())
+        .map_err(CommandError::from_library)
+}
+
+#[tauri::command]
 async fn run_codex_review(
     app: tauri::AppHandle,
     request_id: String,
     idea_id: String,
     request_kind: ReviewKind,
-    package: String,
+    recall_answer: Option<String>,
+    approved_package: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LibraryState, CommandError> {
-    state
-        .library
-        .lock()
-        .map_err(|_| CommandError::library_access())?
-        .validate_review_request(&request_id, &idea_id, &package)
-        .map_err(CommandError::from_library)?;
+    let package = {
+        let library = state
+            .library
+            .lock()
+            .map_err(|_| CommandError::library_access())?;
+        library
+            .validate_review_request_id(&request_id)
+            .map_err(CommandError::from_library)?;
+        library
+            .approve_review_package(
+                &idea_id,
+                request_kind,
+                recall_answer.as_deref(),
+                &approved_package,
+            )
+            .map_err(CommandError::from_library)?
+    };
     let cancellation = Arc::new(AtomicBool::new(false));
     state
         .codex_cancellations
@@ -383,6 +410,7 @@ pub fn run() {
             export_material_markdown,
             export_draft_markdown,
             install_signed_update,
+            prepare_codex_review,
             run_codex_review,
             cancel_codex_review,
             start_codex_login,

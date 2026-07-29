@@ -46,8 +46,11 @@ export async function restoreLatestSnapshot(): Promise<LibraryState> { return no
 export async function exportMaterialMarkdown(materialId: string, path: string): Promise<void> { return invoke("export_material_markdown", { materialId, path }); }
 export async function exportDraftMarkdown(draftId: string, path: string): Promise<LibraryState> { return normalizeLibrary(await invoke<LibraryState>("export_draft_markdown", { draftId, path })); }
 export async function installSignedUpdate(): Promise<boolean> { return invoke<boolean>("install_signed_update"); }
-export async function runCodexReview(requestId: string, ideaId: string, requestKind: ReviewKind, reviewPackage: string): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("run_codex_review", { requestId, ideaId, requestKind, package: reviewPackage }));
+export async function prepareCodexReview(ideaId: string, requestKind: ReviewKind, recallAnswer?: string): Promise<string> {
+  return invoke<string>("prepare_codex_review", { ideaId, requestKind, recallAnswer });
+}
+export async function runCodexReview(requestId: string, ideaId: string, requestKind: ReviewKind, approvedPackage: string, recallAnswer?: string): Promise<LibraryState> {
+  return normalizeLibrary(await invoke<LibraryState>("run_codex_review", { requestId, ideaId, requestKind, recallAnswer, approvedPackage }));
 }
 export async function cancelCodexReview(requestId: string): Promise<void> { return invoke("cancel_codex_review", { requestId }); }
 export async function startCodexLogin(): Promise<void> { return invoke("start_codex_login"); }
