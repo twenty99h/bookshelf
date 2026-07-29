@@ -2,7 +2,8 @@
 
 - Be concise.
 - Prefer FSD in frontend code. Use Feature-Sliced Design Skill if you have no clue how to implement feature.
-- How to access components documentation. Go to bits-ui.com/docs/components/{component_name}/llms.txt.
+- Use Tailwind CSS for styling and Bits UI for components.
+- How to access Bits UI components documentation. Go to bits-ui.com/docs/components/{component_name}/llms.txt.
 
 ### Issue tracker
 
