@@ -1,3 +1,4 @@
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -840,7 +841,7 @@ fn new_id(prefix: &str) -> String {
 
 pub struct Library {
     data_dir: PathBuf,
-    state_file: PathBuf,
+    database_file: PathBuf,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -854,27 +855,24 @@ impl Library {
         fs::create_dir_all(data_dir.as_ref())?;
         fs::create_dir_all(data_dir.as_ref().join("books"))?;
         fs::create_dir_all(data_dir.as_ref().join("snapshots"))?;
-        Ok(Self {
+        let library = Self {
             data_dir: data_dir.as_ref().into(),
-            state_file: data_dir.as_ref().join("library.json"),
-        })
+            database_file: data_dir.as_ref().join("library.sqlite3"),
+        };
+        library.migrate()?;
+        Ok(library)
     }
 
     pub fn load(&self) -> io::Result<LibraryState> {
-        match self.read_state_file() {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let recovery_file = self.state_file.with_extension("json.previous");
-                match fs::read(recovery_file) {
-                    Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        Ok(LibraryState::default())
-                    }
-                    Err(error) => Err(error),
-                }
-            }
-            Err(error) => Err(error),
-        }
+        let connection = Connection::open(&self.database_file).map_err(sqlite_io)?;
+        let json: Option<String> = connection
+            .query_row("SELECT json FROM workspace_state WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(sqlite_io)?;
+        json.map(|value| serde_json::from_str(&value).map_err(io::Error::other))
+            .unwrap_or_else(|| Ok(LibraryState::default()))
     }
 
     pub fn absolute_book_path(&self, stored_file: &str) -> PathBuf {
@@ -969,45 +967,27 @@ impl Library {
     }
 
     pub fn search(&self, query: &str) -> io::Result<Vec<SearchResult>> {
-        let needle = query.trim().to_lowercase();
-        if needle.is_empty() {
+        let terms = query
+            .split_whitespace()
+            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        if terms.is_empty() {
             return Ok(vec![]);
         }
-        let state = self.load()?;
-        let mut results = vec![];
-        for book in &state.books {
-            if book.title.to_lowercase().contains(&needle) {
-                results.push(SearchResult {
-                    id: book.id.clone(),
-                    kind: "book".into(),
-                    title: book.title.clone(),
-                    context: "Название книги".into(),
-                });
-            }
-        }
-        for idea in &state.ideas {
-            let source = format!(
-                "{} · {}",
-                state
-                    .books
-                    .iter()
-                    .find(|book| book.id == idea.book_id)
-                    .map(|book| book.title.as_str())
-                    .unwrap_or("Книга"),
-                idea.section
-            );
-            if idea.formulation.to_lowercase().contains(&needle)
-                || source.to_lowercase().contains(&needle)
-            {
-                results.push(SearchResult {
-                    id: idea.id.clone(),
-                    kind: "idea".into(),
-                    title: idea.formulation.clone(),
-                    context: source,
-                });
-            }
-        }
-        Ok(results)
+        let connection = Connection::open(&self.database_file).map_err(sqlite_io)?;
+        let mut statement = connection.prepare("SELECT entity_id, kind, title, context FROM search_index WHERE search_index MATCH ?1 ORDER BY rank LIMIT 50").map_err(sqlite_io)?;
+        let rows = statement
+            .query_map([terms], |row| {
+                Ok(SearchResult {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    title: row.get(2)?,
+                    context: row.get(3)?,
+                })
+            })
+            .map_err(sqlite_io)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_io)
     }
 
     pub fn export_archive(
@@ -1088,15 +1068,10 @@ impl Library {
             .into());
         }
         let current = self.load()?;
-        if manifest
-            .state
-            .books
-            .iter()
-            .any(|incoming| current.books.iter().any(|book| book.id == incoming.id))
-        {
+        if current != LibraryState::default() {
             return Err(DomainError::new(
-                "archive_duplicates",
-                "Архив содержит книги, которые уже есть в библиотеке",
+                "archive_target_not_empty",
+                "Импорт возможен только в пустую библиотеку: сохраните текущую библиотеку отдельно или используйте чистую установку",
             )
             .into());
         }
@@ -1108,14 +1083,40 @@ impl Library {
                 );
             }
         }
+        let mut prepared: Vec<(PathBuf, PathBuf)> = Vec::new();
         for book in &manifest.state.books {
             let target = self.absolute_book_path(&book.stored_file);
+            if target.exists() {
+                cleanup_paths(prepared.iter().map(|(temporary, _)| temporary));
+                return Err(DomainError::new(
+                    "archive_duplicates",
+                    "Файл этой книги уже существует. Удалите оставшиеся данные или выберите чистую библиотеку",
+                )
+                .into());
+            }
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::copy(staging.path().join(&book.stored_file), target)?;
+            let temporary = target.with_extension(format!("pdf.importing-{}", unique_number()));
+            if let Err(error) = fs::copy(staging.path().join(&book.stored_file), &temporary) {
+                cleanup_paths(prepared.iter().map(|(path, _)| path));
+                return Err(error.into());
+            }
+            prepared.push((temporary, target));
         }
-        self.replace_state(&manifest.state)?;
+        let mut committed: Vec<PathBuf> = Vec::new();
+        for (temporary, target) in &prepared {
+            if let Err(error) = fs::rename(temporary, target) {
+                cleanup_paths(prepared.iter().map(|(path, _)| path));
+                cleanup_paths(committed.iter());
+                return Err(error.into());
+            }
+            committed.push(target.clone());
+        }
+        if let Err(error) = self.replace_state(&manifest.state) {
+            cleanup_paths(committed.iter());
+            return Err(error.into());
+        }
         self.create_snapshot(&manifest.state)?;
         Ok(manifest.state)
     }
@@ -1184,6 +1185,33 @@ impl Library {
         Ok(())
     }
 
+    pub fn export_draft_markdown(
+        &self,
+        draft_id: &str,
+        destination: impl AsRef<Path>,
+    ) -> Result<LibraryState, LibraryError> {
+        let state = self.load()?;
+        let draft = state
+            .drafts
+            .iter()
+            .find(|item| item.id == draft_id)
+            .ok_or_else(|| DomainError::new("draft_not_found", "Черновая заметка не найдена"))?;
+        let book = state
+            .books
+            .iter()
+            .find(|book| book.id == draft.book_id)
+            .map(|book| book.title.as_str())
+            .unwrap_or("Книга");
+        let markdown = format!(
+            "# Черновая заметка\n\nИсточник: {book}, {}, стр. {}\n\n> {}\n\n{}\n",
+            draft.section, draft.page, draft.excerpt, draft.comment
+        );
+        atomic_write(destination.as_ref(), markdown.as_bytes())?;
+        self.apply(LibraryAction::DiscardDraft {
+            draft_id: draft_id.into(),
+        })
+    }
+
     fn create_snapshot(&self, state: &LibraryState) -> io::Result<()> {
         let dir = self.data_dir.join("snapshots");
         let path = dir.join(format!("snapshot-{}.json", unique_number()));
@@ -1198,28 +1226,55 @@ impl Library {
     }
 
     fn replace_state(&self, state: &LibraryState) -> io::Result<()> {
-        let temporary_file = self.state_file.with_extension("json.tmp");
-        let recovery_file = self.state_file.with_extension("json.previous");
-        let bytes = serde_json::to_vec_pretty(state).map_err(io::Error::other)?;
-        remove_if_present(&temporary_file)?;
-        let mut file = fs::File::create(&temporary_file)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        if self.state_file.exists() {
-            remove_if_present(&recovery_file)?;
-            fs::rename(&self.state_file, &recovery_file)?;
+        let mut connection = Connection::open(&self.database_file).map_err(sqlite_io)?;
+        let transaction = connection.transaction().map_err(sqlite_io)?;
+        transaction.execute("INSERT INTO workspace_state (id, json) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET json = excluded.json", [serde_json::to_string(state).map_err(io::Error::other)?]).map_err(sqlite_io)?;
+        transaction
+            .execute("DELETE FROM search_index", [])
+            .map_err(sqlite_io)?;
+        for book in &state.books {
+            transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'book', ?2, 'Название книги')", params![book.id, book.title]).map_err(sqlite_io)?;
         }
-        if let Err(error) = fs::rename(&temporary_file, &self.state_file) {
-            if recovery_file.exists() {
-                let _ = fs::rename(&recovery_file, &self.state_file);
-            }
-            return Err(error);
+        for idea in &state.ideas {
+            let book = state
+                .books
+                .iter()
+                .find(|book| book.id == idea.book_id)
+                .map(|book| book.title.as_str())
+                .unwrap_or("Книга");
+            let context = format!(
+                "{book} · {} · {}",
+                idea.section,
+                idea.fragments
+                    .iter()
+                    .map(|item| item.excerpt.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'idea', ?2, ?3)", params![idea.id, idea.formulation, context]).map_err(sqlite_io)?;
         }
-        remove_if_present(&recovery_file)
+        transaction.commit().map_err(sqlite_io)
     }
 
-    fn read_state_file(&self) -> io::Result<Vec<u8>> {
-        fs::read(&self.state_file)
+    fn migrate(&self) -> io::Result<()> {
+        let connection = Connection::open(&self.database_file).map_err(sqlite_io)?;
+        connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(entity_id UNINDEXED, kind UNINDEXED, title, context, tokenize='unicode61'); INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);").map_err(sqlite_io)?;
+        let legacy = self.data_dir.join("library.json");
+        let has_state: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspace_state WHERE id = 1)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sqlite_io)?;
+        if !has_state && legacy.exists() {
+            let state: LibraryState =
+                serde_json::from_slice(&fs::read(&legacy)?).map_err(io::Error::other)?;
+            drop(connection);
+            self.replace_state(&state)?;
+            fs::rename(&legacy, legacy.with_extension("json.migrated"))?;
+        }
+        Ok(())
     }
 }
 
@@ -1267,6 +1322,14 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 fn crypto_io(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
+}
+fn sqlite_io(error: rusqlite::Error) -> io::Error {
+    io::Error::other(error)
+}
+fn cleanup_paths<'a>(paths: impl Iterator<Item = &'a PathBuf>) {
+    for path in paths {
+        let _ = remove_if_present(path);
+    }
 }
 fn append_bytes<W: Write>(
     archive: &mut tar::Builder<W>,
@@ -1333,22 +1396,24 @@ mod tests {
             .save_workspace_note("Актуальная пометка".into())
             .unwrap();
         assert_eq!(library.load().unwrap().workspace_note, "Актуальная пометка");
-        assert!(!data_dir.join("library.json.previous").exists());
+        assert!(data_dir.join("library.sqlite3").exists());
         fs::remove_dir_all(data_dir).unwrap();
     }
 
     #[test]
-    fn interrupted_replacement_recovers_the_previous_state() {
+    fn failed_domain_action_does_not_replace_the_persisted_state() {
         let data_dir = test_data_dir();
         let library = Library::open(&data_dir).unwrap();
         library
             .save_workspace_note("Сохранённая пометка".into())
             .unwrap();
-        fs::rename(
-            data_dir.join("library.json"),
-            data_dir.join("library.json.previous"),
-        )
-        .unwrap();
+        let result = library.apply(LibraryAction::ResolveDraftAsIdea {
+            draft_id: "missing".into(),
+            formulation: "Формулировка".into(),
+            section: "Глава".into(),
+            assignments: vec!["recall".into()],
+        });
+        assert!(result.is_err());
         assert_eq!(
             library.load().unwrap().workspace_note,
             "Сохранённая пометка"
@@ -1357,12 +1422,34 @@ mod tests {
     }
 
     #[test]
-    fn activating_another_study_preserves_work_and_keeps_only_one_active() {
+    fn full_text_search_updates_in_the_same_transaction_as_working_state() {
+        let data_dir = test_data_dir();
+        let library = Library::open(&data_dir).unwrap();
         let mut state = LibraryState::default();
-        state.books = vec![
-            Book::for_test("one", "Первая"),
-            Book::for_test("two", "Вторая"),
-        ];
+        state
+            .books
+            .push(Book::for_test("book", "Распределённые системы"));
+        state.ideas.push(Idea {
+            formulation: "Репликация требует явной модели согласованности".into(),
+            ..Idea::for_test("idea", "book")
+        });
+        library.replace_state(&state).unwrap();
+        assert_eq!(library.search("согласованности").unwrap()[0].id, "idea");
+        state.ideas.clear();
+        library.replace_state(&state).unwrap();
+        assert!(library.search("согласованности").unwrap().is_empty());
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn activating_another_study_preserves_work_and_keeps_only_one_active() {
+        let mut state = LibraryState {
+            books: vec![
+                Book::for_test("one", "Первая"),
+                Book::for_test("two", "Вторая"),
+            ],
+            ..LibraryState::default()
+        };
         state
             .apply(LibraryAction::ActivateStudy {
                 book_id: "one".into(),

@@ -2,6 +2,7 @@ export {
   commandErrorMessage,
   bookFilePath,
   executeLibraryAction,
+  exportDraftMarkdown,
   exportLibraryArchive,
   exportMaterialMarkdown,
   importPdf,

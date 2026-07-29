@@ -209,6 +209,20 @@ fn export_material_markdown(
 }
 
 #[tauri::command]
+fn export_draft_markdown(
+    draft_id: String,
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<LibraryState, CommandError> {
+    state
+        .library
+        .lock()
+        .map_err(|_| CommandError::library_access())?
+        .export_draft_markdown(&draft_id, path)
+        .map_err(CommandError::from_library)
+}
+
+#[tauri::command]
 async fn install_signed_update(app: tauri::AppHandle) -> Result<bool, CommandError> {
     let updater = app.updater().map_err(|error| CommandError {
         code: "updater_unavailable",
@@ -256,6 +270,7 @@ pub fn run() {
             import_library_archive,
             restore_latest_snapshot,
             export_material_markdown,
+            export_draft_markdown,
             install_signed_update,
         ])
         .run(tauri::generate_context!())

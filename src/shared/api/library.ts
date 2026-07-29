@@ -90,6 +90,7 @@ export async function exportLibraryArchive(path: string, password: string): Prom
 export async function importLibraryArchive(path: string, password: string): Promise<LibraryState> { return normalizeLibrary(await invoke<LibraryState>("import_library_archive", { path, password })); }
 export async function restoreLatestSnapshot(): Promise<LibraryState> { return normalizeLibrary(await invoke<LibraryState>("restore_latest_snapshot")); }
 export async function exportMaterialMarkdown(materialId: string, path: string): Promise<void> { return invoke("export_material_markdown", { materialId, path }); }
+export async function exportDraftMarkdown(draftId: string, path: string): Promise<LibraryState> { return normalizeLibrary(await invoke<LibraryState>("export_draft_markdown", { draftId, path })); }
 export async function installSignedUpdate(): Promise<boolean> { return invoke<boolean>("install_signed_update"); }
 
 export function commandErrorMessage(cause: unknown): string {
