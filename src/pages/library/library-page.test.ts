@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -65,6 +65,30 @@ test("reader sees an empty library and can save a local workspace note", async (
   expect(invokeMock).toHaveBeenLastCalledWith("save_workspace_note", {
     note: "Выбрать следующую книгу",
   });
+});
+
+test("reader can open a local search result with its context", async () => {
+  invokeMock.mockImplementation(async (command) => {
+    if (command === "search_library") {
+      return [{ id: "topic-1", kind: "topic", title: "Надёжность хранилищ", context: "Распределённые системы · Глава 3" }];
+    }
+    return {
+      books: [{ id: "book-1", title: "Распределённые системы" }],
+      ideas: [{ id: "idea-1", bookId: "book-1", section: "Глава 3", formulation: "Кворум ограничивает устаревшие чтения", assignments: ["recall"], fragments: [], versions: [], topicIds: ["topic-1"] }],
+      topics: [{ id: "topic-1", name: "Надёжность хранилищ" }],
+      workspaceNote: "",
+    };
+  });
+
+  render(LibraryPage);
+  const search = await screen.findByRole("textbox", { name: "Поиск по книгам, идеям, темам, источникам и материалам" });
+  await fireEvent.input(search, { target: { value: "надёжность" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Найти" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Открыть Надёжность хранилищ" }));
+
+  const openedRecord = screen.getByRole("region", { name: "Открытая запись поиска" });
+  expect(within(openedRecord).getByRole("heading", { name: "Надёжность хранилищ" })).toBeTruthy();
+  expect(within(openedRecord).getByText("Распределённые системы · Глава 3")).toBeTruthy();
 });
 
 test("Codex receives only the review package after explicit confirmation", async () => {

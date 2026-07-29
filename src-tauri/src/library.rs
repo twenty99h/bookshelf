@@ -1002,6 +1002,15 @@ fn find_book_mut<'a>(state: &'a mut LibraryState, id: &str) -> Result<&'a mut Bo
         .find(|item| item.id == id)
         .ok_or_else(|| DomainError::new("book_not_found", "Книга не найдена"))
 }
+
+fn book_title<'a>(state: &'a LibraryState, book_id: &str) -> &'a str {
+    state
+        .books
+        .iter()
+        .find(|book| book.id == book_id)
+        .map(|book| book.title.as_str())
+        .unwrap_or("Книга")
+}
 fn find_idea<'a>(state: &'a LibraryState, id: &str) -> Result<&'a Idea, DomainError> {
     state
         .ideas
@@ -1054,6 +1063,8 @@ impl Library {
             database_file: data_dir.as_ref().join("library.sqlite3"),
         };
         library.migrate()?;
+        let state = library.load()?;
+        library.replace_state(&state)?;
         Ok(library)
     }
 
@@ -1292,9 +1303,12 @@ impl Library {
         let mut statement = connection.prepare("SELECT entity_id, kind, title, context FROM search_index WHERE search_index MATCH ?1 ORDER BY rank LIMIT 50").map_err(sqlite_io)?;
         let rows = statement
             .query_map([terms], |row| {
+                let stored_kind: String = row.get(1)?;
+                let kind = SearchResultKind::from_database(&stored_kind)
+                    .ok_or(rusqlite::Error::InvalidQuery)?;
                 Ok(SearchResult {
                     id: row.get(0)?,
-                    kind: row.get(1)?,
+                    kind,
                     title: row.get(2)?,
                     context: row.get(3)?,
                 })
@@ -1553,22 +1567,44 @@ impl Library {
             transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'book', ?2, 'Название книги')", params![book.id, book.title]).map_err(sqlite_io)?;
         }
         for idea in &state.ideas {
-            let book = state
-                .books
-                .iter()
-                .find(|book| book.id == idea.book_id)
-                .map(|book| book.title.as_str())
-                .unwrap_or("Книга");
+            let book = book_title(state, &idea.book_id);
             let context = format!(
                 "{book} · {} · {}",
                 idea.section,
                 idea.fragments
                     .iter()
-                    .map(|item| item.excerpt.as_str())
+                    .map(|item| format!("стр. {} · {} · {}", item.page, item.excerpt, item.context))
                     .collect::<Vec<_>>()
                     .join(" ")
             );
             transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'idea', ?2, ?3)", params![idea.id, idea.formulation, context]).map_err(sqlite_io)?;
+        }
+        for topic in &state.topics {
+            let context = state
+                .ideas
+                .iter()
+                .filter(|idea| idea.topic_ids.contains(&topic.id))
+                .map(|idea| {
+                    let book = book_title(state, &idea.book_id);
+                    format!("{book} · {} · {}", idea.section, idea.formulation)
+                })
+                .collect::<Vec<_>>()
+                .join(" · ");
+            transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'topic', ?2, ?3)", params![topic.id, topic.name, context]).map_err(sqlite_io)?;
+        }
+        for material in &state.materials {
+            let context = [
+                material.problem.as_str(),
+                material.idea.as_str(),
+                material.example.as_str(),
+                material.result.as_str(),
+                material.limitations.as_str(),
+            ]
+            .into_iter()
+            .filter(|part| !part.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+            transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'material', ?2, ?3)", params![material.id, material.title, context]).map_err(sqlite_io)?;
         }
         transaction.commit().map_err(sqlite_io)
     }
@@ -1607,9 +1643,31 @@ fn without_transient_ai(mut state: LibraryState) -> LibraryState {
 #[ts(export)]
 pub struct SearchResult {
     pub id: String,
-    pub kind: String,
+    pub kind: SearchResultKind,
     pub title: String,
     pub context: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SearchResultKind {
+    Book,
+    Idea,
+    Topic,
+    Material,
+}
+
+impl SearchResultKind {
+    fn from_database(value: &str) -> Option<Self> {
+        match value {
+            "book" => Some(Self::Book),
+            "idea" => Some(Self::Idea),
+            "topic" => Some(Self::Topic),
+            "material" => Some(Self::Material),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1747,7 +1805,7 @@ mod tests {
     }
 
     #[test]
-    fn full_text_search_updates_in_the_same_transaction_as_working_state() {
+    fn full_text_search_covers_learning_records_and_updates_transactionally() {
         let data_dir = test_data_dir();
         let library = Library::open(&data_dir).unwrap();
         let mut state = LibraryState::default();
@@ -1756,13 +1814,64 @@ mod tests {
             .push(Book::for_test("book", "Распределённые системы"));
         state.ideas.push(Idea {
             formulation: "Репликация требует явной модели согласованности".into(),
+            fragments: vec![SourceFragment {
+                page: 42,
+                excerpt: "Кворум подтверждений".into(),
+                context: "Запись и чтение пересекаются".into(),
+            }],
             ..Idea::for_test("idea", "book")
+        });
+        state.topics.push(Topic {
+            id: "topic".into(),
+            name: "Надёжность хранилищ".into(),
+        });
+        state.materials.push(TransferMaterial {
+            id: "material".into(),
+            title: "Как выбирать кворум".into(),
+            limitations: "Не скрывает сетевые разделения".into(),
+            ..TransferMaterial::default()
         });
         library.replace_state(&state).unwrap();
         assert_eq!(library.search("согласованности").unwrap()[0].id, "idea");
+        assert_eq!(
+            library.search("Кворум подтверждений").unwrap()[0].id,
+            "idea"
+        );
+        assert_eq!(
+            library.search("Запись и чтение пересекаются").unwrap()[0].id,
+            "idea"
+        );
+        assert_eq!(
+            library.search("Надёжность хранилищ").unwrap()[0].id,
+            "topic"
+        );
+        assert_eq!(
+            library.search("сетевые разделения").unwrap()[0].id,
+            "material"
+        );
         state.ideas.clear();
+        state.topics.clear();
+        state.materials.clear();
         library.replace_state(&state).unwrap();
         assert!(library.search("согласованности").unwrap().is_empty());
+        assert!(library.search("Надёжность хранилищ").unwrap().is_empty());
+        assert!(library.search("сетевые разделения").unwrap().is_empty());
+
+        state.topics.push(Topic {
+            id: "reindexed-topic".into(),
+            name: "Восстановленный индекс".into(),
+        });
+        library.replace_state(&state).unwrap();
+        Connection::open(&library.database_file)
+            .unwrap()
+            .execute("DELETE FROM search_index", [])
+            .unwrap();
+        drop(library);
+        let reopened = Library::open(&data_dir).unwrap();
+        assert_eq!(
+            reopened.search("Восстановленный индекс").unwrap()[0].id,
+            "reindexed-topic"
+        );
         fs::remove_dir_all(data_dir).unwrap();
     }
 

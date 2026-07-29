@@ -14,6 +14,7 @@ import type { Retrospective } from "./generated/Retrospective";
 import type { ReviewDecision } from "./generated/ReviewDecision";
 import type { ReviewKind } from "./generated/ReviewKind";
 import type { SearchResult } from "./generated/SearchResult";
+import type { SearchResultKind } from "./generated/SearchResultKind";
 import type { StudySession } from "./generated/StudySession";
 import type { Topic } from "./generated/Topic";
 import type { TransferMaterial } from "./generated/TransferMaterial";
@@ -21,7 +22,7 @@ import type { TransferMaterial } from "./generated/TransferMaterial";
 export type {
   Book, CodexStreamEvent, DraftNote, Experiment, Idea, IdeaLink, IdeaReview, LibraryAction,
   LibraryState, OutlineItem, Recall, Retrospective, ReviewDecision, ReviewKind,
-  SearchResult, StudySession, Topic, TransferMaterial,
+  SearchResult, SearchResultKind, StudySession, Topic, TransferMaterial,
 };
 type CommandError = { code?: string; message?: string };
 

@@ -40,6 +40,7 @@
   let settingsOpen = $state(false);
   let searchQuery = $state("");
   let results = $state<SearchResult[]>([]);
+  let openedSearchResult = $state<SearchResult | null>(null);
   let readingBook = $state<Book | null>(null);
   let bookUrl = $state("");
   let excerpt = $state("");
@@ -67,6 +68,9 @@
 
   let debt = $derived((library?.drafts.length ?? 0) + (library?.reviews.filter((item) => item.pending).length ?? 0));
   let activeBook = $derived(library?.books.find((book) => book.id === library?.activeStudyBookId));
+  let openedIdea = $derived(openedSearchResult?.kind === "idea" ? library?.ideas.find((idea) => idea.id === openedSearchResult?.id) : undefined);
+  let openedTopic = $derived(openedSearchResult?.kind === "topic" ? library?.topics.find((topic) => topic.id === openedSearchResult?.id) : undefined);
+  let openedMaterial = $derived(openedSearchResult?.kind === "material" ? library?.materials.find((material) => material.id === openedSearchResult?.id) : undefined);
   let nextStep = $derived(
     activeBook ? `Продолжить «${activeBook.title}»` : debt > 0 ? "Разобрать ближайшую заметку" : library?.books.length ? "Выбрать книгу для изучения" : "Импортировать первую книгу",
   );
@@ -173,8 +177,23 @@
   }
 
   async function search() {
+    openedSearchResult = null;
     try { results = await searchLibrary(searchQuery); }
     catch (cause) { error = commandErrorMessage(cause); }
+  }
+
+  async function openSearchResult(result: SearchResult) {
+    if (result.kind === "book") {
+      const book = library?.books.find((candidate) => candidate.id === result.id);
+      if (book) await openBook(book);
+      return;
+    }
+    openedSearchResult = result;
+    navigate("ideas");
+  }
+
+  function searchResultKind(kind: SearchResult["kind"]) {
+    return ({ book: "Книга", idea: "Идея", topic: "Тема", material: "Материал" } satisfies Record<SearchResult["kind"], string>)[kind];
   }
 
   async function exportArchive() {
@@ -270,11 +289,10 @@
         </section>
 
         <form class="search" onsubmit={(event) => { event.preventDefault(); search(); }}>
-          <label for="search">Поиск по книгам, идеям и источникам</label><div><input id="search" bind:value={searchQuery} placeholder="Название или формулировка" /><Button type="submit">Найти</Button></div>
+          <label for="search">Поиск по книгам, идеям, темам, источникам и материалам</label><div><input id="search" bind:value={searchQuery} placeholder="Название или формулировка" /><Button type="submit">Найти</Button></div>
         </form>
         {#if searchQuery && results.length === 0}<p class="muted">Совпадений пока нет.</p>{/if}
-        {#if results.length}<ul class="results">{#each results as result}<li><small>{result.kind === "book" ? "Книга" : "Идея"}</small><b>{result.title}</b><span>{result.context}</span></li>{/each}</ul>{/if}
-
+        {#if results.length}<ul class="-mt-3 mb-[26px] grid list-none gap-px p-0">{#each results as result}<li class="grid grid-cols-[62px_minmax(130px,.7fr)_minmax(180px,1fr)_auto] items-center gap-3 border-b border-rule px-1 py-3 max-[640px]:grid-cols-1"><small class="uppercase">{searchResultKind(result.kind)}</small><b>{result.title}</b><span class="text-ink-muted">{result.context}</span><Button onclick={() => openSearchResult(result)}>Открыть {result.title}</Button></li>{/each}</ul>{/if}
         {#if readingBook}
           <section class="reader">
             <header><div><p class="eyebrow">Чтение · страница {readingBook.reading?.page ?? 1}</p><h2>{readingBook.title}</h2></div><Button onclick={() => readingBook = null}>Закрыть</Button></header>
@@ -292,6 +310,13 @@
       {:else if view === "queue"}
         {#if library.drafts.length === 0}<section class="empty compact"><h2>Очередь разобрана</h2><p>Новые фрагменты можно сохранить, не выходя из просмотрщика.</p></section>{:else}<section class="stack">{#each library.drafts as draft}<article class="work-card"><p class="eyebrow">{bookTitle(draft.bookId)} · {draft.section} · стр. {draft.page}</p><blockquote>{draft.excerpt}</blockquote>{#if draft.comment}<p>{draft.comment}</p>{/if}<label for={`idea-${draft.id}`}>Самостоятельная формулировка</label><textarea id={`idea-${draft.id}`} bind:value={formulation}></textarea><div class="card-actions"><Button variant="primary" onclick={() => resolveDraft(draft.id)}>Создать идею</Button><select aria-label="Идея для присоединения" bind:value={attachIdeaId}><option value="">Выберите идею</option>{#each library.ideas as idea}<option value={idea.id}>{idea.formulation}</option>{/each}</select><Button disabled={!attachIdeaId} onclick={() => run({ kind: "attachDraftToIdea", draftId: draft.id, ideaId: attachIdeaId }, "Фрагмент присоединён к идее")}>Присоединить</Button><Button onclick={() => exportDraft(draft.id)}>Экспортировать</Button><Button onclick={() => run({ kind: "discardDraft", draftId: draft.id }, "Черновая заметка удалена")}>Удалить</Button></div></article>{/each}</section>{/if}
       {:else if view === "ideas"}
+        {#if openedIdea}
+          <section class="mb-5 rounded-[11px] border border-rule bg-paper-raised p-5 shadow-paper" aria-label="Открытая запись поиска"><p class="eyebrow">Идея · {bookTitle(openedIdea.bookId)} · {openedIdea.section}</p><h2>{openedIdea.formulation}</h2>{#each openedIdea.fragments as fragment}<blockquote>стр. {fragment.page}: {fragment.excerpt}{#if fragment.context}<br /><small>{fragment.context}</small>{/if}</blockquote>{/each}<Button onclick={() => { openedSearchResult = null; navigate("library"); }}>Вернуться к поиску</Button></section>
+        {:else if openedTopic}
+          <section class="mb-5 rounded-[11px] border border-rule bg-paper-raised p-5 shadow-paper" aria-label="Открытая запись поиска"><p class="eyebrow">Тема знаний</p><h2>{openedTopic.name}</h2>{#each library.ideas.filter((idea) => idea.topicIds.includes(openedTopic!.id)) as idea}<article class="border-t border-rule py-3"><b>{idea.formulation}</b><p class="mb-0 text-ink-muted">{bookTitle(idea.bookId)} · {idea.section}</p></article>{/each}<Button onclick={() => { openedSearchResult = null; navigate("library"); }}>Вернуться к поиску</Button></section>
+        {:else if openedMaterial}
+          <section class="mb-5 rounded-[11px] border border-rule bg-paper-raised p-5 shadow-paper" aria-label="Открытая запись поиска"><p class="eyebrow">Материал для передачи</p><h2>{openedMaterial.title}</h2><p><b>Проблема:</b> {openedMaterial.problem}</p><p><b>Идея:</b> {openedMaterial.idea}</p><p><b>Пример:</b> {openedMaterial.example}</p><p><b>Результат:</b> {openedMaterial.result}</p><p><b>Ограничения:</b> {openedMaterial.limitations}</p><Button onclick={() => { openedSearchResult = null; navigate("library"); }}>Вернуться к поиску</Button></section>
+        {/if}
         <section class="section-head"><div><h2>Темы знаний</h2><p>Темы и связи появляются только после вашего подтверждения.</p></div><form onsubmit={(event) => { event.preventDefault(); run({ kind: "createTopic", name: topicName }, "Тема создана"); topicName = ""; }}><input aria-label="Название темы" bind:value={topicName} placeholder="Например, архитектура данных" /><Button type="submit">Создать тему</Button></form></section>
         {#if library.ideas.length === 0}<section class="empty compact"><h2>Здесь появятся ваши идеи</h2><p>Разберите черновую заметку, чтобы сохранить авторскую формулировку и источник.</p></section>{:else}<IdeaWorkbench {library} {run} {bookTitle} onLibrary={(next) => { library = next; }} />{#if library.materials.length}<section class="stack review-packages" aria-label="Материалы для передачи">{#each library.materials as material}<article class="work-card"><p class="eyebrow">Материал для передачи</p><h2>{material.title}</h2><div class="card-actions"><Button onclick={async () => { await navigator.clipboard.writeText(`# ${material.title}\n\n${material.idea}`); feedback = "Материал скопирован"; }}>Скопировать</Button><Button onclick={() => exportMaterial(material.id, material.title)}>Сохранить Markdown</Button></div></article>{/each}</section>{/if}{/if}
       {:else}
@@ -316,7 +341,6 @@
   .debt { align-self: stretch; border-left: 1px solid #ccd69e; padding-left: 22px; text-align: center; }.debt b { font: 34px ui-monospace, monospace; }
   .search { margin-bottom: 24px; }.search label, :global(form label) { display: block; margin-bottom: 6px; color: #4d5861; font-size: 12px; font-weight: 700; }.search > div, .section-head form { display: flex; gap: 8px; }
   input, textarea, select { width: 100%; min-width: 0; border: 1px solid #cfd1cd; border-radius: 8px; background: #fffefa; padding: 11px 12px; color: var(--color-ink); outline: none; } textarea { min-height: 84px; resize: vertical; } input:focus, textarea:focus, select:focus { border-color: #697c39; box-shadow: 0 0 0 3px var(--color-focus); }
-  .results { display: grid; gap: 1px; margin: -12px 0 26px; padding: 0; list-style: none; }.results li { display: grid; grid-template-columns: 62px 1fr auto; gap: 12px; border-bottom: 1px solid var(--color-rule); padding: 12px 4px; }.results small { text-transform: uppercase; }.results span { color: var(--color-ink-muted); }
   .empty { display: grid; justify-items: center; border: 1px solid var(--color-rule); border-radius: 14px; background: var(--color-paper-raised); padding: 56px 28px; text-align: center; box-shadow: var(--shadow-paper); }.empty > div { display: grid; width: 54px; height: 64px; place-items: center; margin-bottom: 20px; border-radius: 4px 11px 11px 4px; background: #eaf1c8; box-shadow: inset 5px 0 #b8d94a; font-size: 26px; }.empty > p:not(.eyebrow) { max-width: 590px; color: var(--color-ink-muted); line-height: 1.65; }.empty > small { margin-top: 13px; color: var(--color-ink-muted); }.empty.compact { padding: 42px 24px; }
   .books, .stack { display: grid; gap: 14px; }.books article { display: grid; grid-template-columns: 104px 1fr; gap: 24px; border-bottom: 1px solid var(--color-rule); padding: 20px 0; }.cover { display: grid; min-height: 138px; place-items: center; border-radius: 3px 9px 9px 3px; background: #283847; color: #dce9a7; box-shadow: inset 5px 0 #101923, 0 8px 17px #17212a24; }.cover span { font-family: Georgia, serif; font-size: 40px; }.books article > div:last-child { align-self: center; }.books article p { color: var(--color-ink-muted); }
   .reader, .work-card { border: 1px solid var(--color-rule); border-radius: 11px; background: var(--color-paper-raised); padding: 24px; box-shadow: var(--shadow-paper); }.reader > header, .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 26px; }.reader-tools { display: grid; grid-template-columns: .7fr 1.3fr; gap: 28px; padding-top: 24px; }.reader-tools p { color: var(--color-ink-muted); }.reader-tools form, .retrospective { display: grid; gap: 7px; }
