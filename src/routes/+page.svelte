@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
-
-  type BookSummary = { id: string; title: string };
-  type LibraryState = { books: BookSummary[]; workspaceNote: string };
+  import {
+    commandErrorMessage,
+    loadLibrary,
+    saveWorkspaceNote,
+    type LibraryState,
+  } from "../platform/commands/library";
 
   let library = $state<LibraryState | null>(null);
   let note = $state("");
@@ -14,10 +16,10 @@
 
   onMount(async () => {
     try {
-      library = await invoke<LibraryState>("load_library");
+      library = await loadLibrary();
       note = library.workspaceNote;
     } catch (cause) {
-      error = String(cause);
+      error = commandErrorMessage(cause);
     } finally {
       loading = false;
     }
@@ -29,10 +31,10 @@
     saved = false;
     error = "";
     try {
-      library = await invoke<LibraryState>("save_workspace_note", { note });
+      library = await saveWorkspaceNote(note);
       saved = true;
     } catch (cause) {
-      error = String(cause);
+      error = commandErrorMessage(cause);
     } finally {
       saving = false;
     }
