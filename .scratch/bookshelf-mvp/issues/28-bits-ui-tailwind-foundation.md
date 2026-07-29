@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Запускаемая Bookshelf с устойчивым локальным состоянием.
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] Tailwind CSS 4 подключён к SvelteKit-сборке без удалённых стилей, шрифтов или runtime-зависимостей.
 - [x] Общие цвета, типографика, отступы, focus ring и состояния элементов выражены едиными токенами Tailwind.
