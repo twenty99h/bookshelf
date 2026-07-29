@@ -6,7 +6,7 @@
     loadLibrary,
     saveWorkspaceNote,
     type LibraryState,
-  } from "../../../platform/commands/library";
+  } from "@/shared/api";
 
   let library = $state<LibraryState | null>(null);
   let note = $state("");
