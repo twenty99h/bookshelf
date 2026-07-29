@@ -19,12 +19,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 test("reader can import the first PDF from the empty library", async () => {
-  invokeMock
-    .mockResolvedValueOnce({ books: [], workspaceNote: "" })
-    .mockResolvedValueOnce({
-      books: [{ id: "book-1", title: "Designing Data-Intensive Applications" }],
-      workspaceNote: "",
-    });
+  invokeMock.mockResolvedValueOnce({ books: [], workspaceNote: "" }).mockResolvedValueOnce({
+    books: [{ id: "book-1", title: "Designing Data-Intensive Applications" }],
+    workspaceNote: "",
+  });
   openMock.mockResolvedValue("/reader/ddia.pdf");
 
   render(LibraryPage);
@@ -70,11 +68,24 @@ test("reader sees an empty library and can save a local workspace note", async (
 test("reader can open a local search result with its context", async () => {
   invokeMock.mockImplementation(async (command) => {
     if (command === "search_library") {
-      return [{ id: "topic-1", kind: "topic", title: "Надёжность хранилищ", context: "Распределённые системы · Глава 3" }];
+      return [
+        { id: "topic-1", kind: "topic", title: "Надёжность хранилищ", context: "Распределённые системы · Глава 3" },
+      ];
     }
     return {
       books: [{ id: "book-1", title: "Распределённые системы" }],
-      ideas: [{ id: "idea-1", bookId: "book-1", section: "Глава 3", formulation: "Кворум ограничивает устаревшие чтения", assignments: ["recall"], fragments: [], versions: [], topicIds: ["topic-1"] }],
+      ideas: [
+        {
+          id: "idea-1",
+          bookId: "book-1",
+          section: "Глава 3",
+          formulation: "Кворум ограничивает устаревшие чтения",
+          assignments: ["recall"],
+          fragments: [],
+          versions: [],
+          topicIds: ["topic-1"],
+        },
+      ],
       topics: [{ id: "topic-1", name: "Надёжность хранилищ" }],
       workspaceNote: "",
     };
@@ -94,12 +105,30 @@ test("reader can open a local search result with its context", async () => {
 test("Codex receives only the review package after explicit confirmation", async () => {
   const state = {
     books: [{ id: "book-1", title: "Надёжные системы" }],
-    ideas: [{
-      id: "idea-1", bookId: "book-1", section: "Глава 3", formulation: "Отказы нужно проектировать явно",
-      assignments: ["recall"], fragments: [{ page: 42, excerpt: "Failure is part of the design", context: "secret nearby context" }],
-      versions: [], topicIds: [],
-    }],
-    experiments: [{ id: "experiment-1", ideaId: "idea-1", situation: "SECRET EXPERIMENT", action: "", result: "", conclusion: "", successful: false, completed: false }],
+    ideas: [
+      {
+        id: "idea-1",
+        bookId: "book-1",
+        section: "Глава 3",
+        formulation: "Отказы нужно проектировать явно",
+        assignments: ["recall"],
+        fragments: [{ page: 42, excerpt: "Failure is part of the design", context: "secret nearby context" }],
+        versions: [],
+        topicIds: [],
+      },
+    ],
+    experiments: [
+      {
+        id: "experiment-1",
+        ideaId: "idea-1",
+        situation: "SECRET EXPERIMENT",
+        action: "",
+        result: "",
+        conclusion: "",
+        successful: false,
+        completed: false,
+      },
+    ],
     workspaceNote: "SECRET NOTE",
   };
   const generatedPackage = [
@@ -107,7 +136,7 @@ test("Codex receives only the review package after explicit confirmation", async
     "Выбранный фрагмент: Failure is part of the design",
     "Авторская формулировка: Отказы нужно проектировать явно",
   ].join("\n\n");
-  invokeMock.mockImplementation(async (command) => command === "prepare_codex_review" ? generatedPackage : state);
+  invokeMock.mockImplementation(async (command) => (command === "prepare_codex_review" ? generatedPackage : state));
   render(LibraryPage);
 
   await fireEvent.click(await screen.findByRole("button", { name: /^Идеи/ }));
@@ -118,7 +147,9 @@ test("Codex receives only the review package after explicit confirmation", async
     recallAnswer: undefined,
   });
   expect(screen.getByText(/Полный PDF, эксперименты и другие заметки не добавляются/)).toBeTruthy();
-  expect(await screen.findByText((_, element) => element?.tagName === "PRE" && element.textContent === generatedPackage)).toBeTruthy();
+  expect(
+    await screen.findByText((_, element) => element?.tagName === "PRE" && element.textContent === generatedPackage),
+  ).toBeTruthy();
 
   await fireEvent.click(screen.getByRole("button", { name: "Подтвердить и отправить" }));
   const reviewCall = invokeMock.mock.calls.find(([command]) => command === "run_codex_review");

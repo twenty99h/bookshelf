@@ -1,5 +1,10 @@
 <script lang="ts">
-  let { label, active = false, count, onclick }: { label: string; active?: boolean; count?: number; onclick: () => void } = $props();
+  let {
+    label,
+    active = false,
+    count,
+    onclick,
+  }: { label: string; active?: boolean; count?: number; onclick: () => void } = $props();
 </script>
 
 <button
@@ -8,5 +13,7 @@
   {onclick}
 >
   <span>{label}</span>
-  {#if count !== undefined}<small class="min-w-6 rounded-full bg-[#3a4751] px-1.5 py-0.5 text-center font-mono text-[11px]">{count}</small>{/if}
+  {#if count !== undefined}<small
+      class="min-w-6 rounded-full bg-[#3a4751] px-1.5 py-0.5 text-center font-mono text-[11px]">{count}</small
+    >{/if}
 </button>

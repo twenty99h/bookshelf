@@ -1,0 +1,10 @@
+/.svelte-kit/
+/.scratch/
+/build/
+/docs/
+/src-tauri/
+/src/shared/api/generated/
+/static/
+/AGENTS.md
+/README.md
+/pnpm-lock.yaml

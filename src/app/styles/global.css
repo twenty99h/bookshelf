@@ -20,13 +20,35 @@
 }
 
 @layer base {
-  * { box-sizing: border-box; }
-  body { margin: 0; min-width: 320px; background: var(--color-paper); color: var(--color-ink); font-family: var(--font-body); }
-  button, input, textarea, select { font: inherit; }
-  button { cursor: pointer; }
-  button:disabled { cursor: not-allowed; }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    min-width: 320px;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+  }
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
 }
