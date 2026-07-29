@@ -1,7 +1,7 @@
 # 06 — Review Rust domain and persistence boundaries
 
 Type: task
-Status: claimed
+Status: ready-for-agent
 
 ## Review findings
 

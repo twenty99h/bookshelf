@@ -1,7 +1,7 @@
 # 02 — Review the Codex boundary
 
 Type: task
-Status: claimed
+Status: resolved
 
 ## Review findings
 
@@ -14,7 +14,7 @@ Status: claimed
 
 - [x] Validate idea, request id, request kind, and exact package before launching Codex.
 - [x] Production resolves only the bundled sidecar; an explicit development override remains possible.
-- [ ] Generate protocol DTOs from the pinned schema or structurally validate every consumed App Server shape.
+- [x] Generate protocol DTOs from the pinned schema or structurally validate every consumed App Server shape.
 - [x] Extract reusable Codex connection setup and use closed Rust enums for request/decision values.
 - [x] Separate adapter and IPC ownership enough that external process details do not leak into commands.
 
@@ -23,3 +23,5 @@ Status: claimed
 The Codex process/protocol lives in `adapters/codex`, commands validate domain-owned review packages first, and production only accepts the paired sidecar. Protocol fixtures and release schema assertions cover the stable App Server surface.
 
 Second-pass standards review found that token presence plus hand-written `Value` parsing is not the schema-generated/structural compatibility promised by the architecture. The event IPC DTO is now generated, but protocol DTO generation remains open.
+
+Resolved in the follow-up: all sent requests and consumed responses/events now pass through typed Serde protocol DTOs; required IDs, result envelopes, login fields, deltas, terminal status, and errors are structurally decoded.
