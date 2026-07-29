@@ -3,6 +3,11 @@
   "productName": "Bookshelf",
   "version": "0.1.0",
   "identifier": "com.minion.bookshelf",
+  "plugins": {
+    "updater": {
+      "pubkey": ""
+    }
+  },
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -31,14 +36,13 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": false
+      },
+      "allowDowngrades": false,
       "nsis": {
         "installMode": "currentUser",
         "languages": ["Russian", "English"]

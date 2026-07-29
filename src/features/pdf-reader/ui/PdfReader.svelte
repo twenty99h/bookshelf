@@ -5,13 +5,15 @@
   import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
   import "pdfjs-dist/web/pdf_viewer.css";
 
-  let { url, initialPage = 1, initialZoom = 1, initialScroll = 0, onPosition, onSelection }: {
+  let { url, savedOutline = [], initialPage = 1, initialZoom = 1, initialScroll = 0, onPosition, onSelection, onOutline }: {
     url: string;
+    savedOutline?: { id: string; title: string; page: number; parentId?: string | null }[];
     initialPage?: number;
     initialZoom?: number;
     initialScroll?: number;
     onPosition: (page: number, zoom: number, scroll: number) => void;
     onSelection: (excerpt: string, context: string) => void;
+    onOutline: (outline: { id: string; title: string; page: number; parentId: null }[]) => void;
   } = $props();
   let canvas: HTMLCanvasElement;
   let textLayerContainer: HTMLDivElement;
@@ -20,7 +22,8 @@
   let page = $state(1);
   let zoom = $state(1);
   let pageCount = $state(0);
-  let outline = $state<{ title: string; page: number }[]>([]);
+  let embeddedOutline = $state<{ id: string; title: string; page: number; parentId: null }[]>([]);
+  let navigationOutline = $derived(savedOutline.length > 0 ? savedOutline : embeddedOutline);
   let error = $state("");
   let rendering = false;
   let pending = false;
@@ -40,7 +43,8 @@
       zoom = initialZoom;
       pdfDocument = await pdfjs.getDocument({ url }).promise;
       pageCount = pdfDocument.numPages;
-      outline = await readOutline(pdfDocument);
+      embeddedOutline = await readOutline(pdfDocument);
+      if (savedOutline.length === 0 && embeddedOutline.length > 0) onOutline(embeddedOutline);
       await renderPage();
       scrollContainer.scrollTop = initialScroll;
     } catch (cause) {
@@ -51,14 +55,14 @@
   async function readOutline(pdf: PDFDocumentProxy) {
     const items = await pdf.getOutline();
     if (!items) return [];
-    const resolved = await Promise.all(items.map(async (item) => {
+    const resolved = await Promise.all(items.map(async (item, index) => {
       try {
         const destination = typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
         if (!destination) return null;
-        return { title: item.title, page: (await pdf.getPageIndex(destination[0])) + 1 };
+        return { id: `pdf-${index}-${(await pdf.getPageIndex(destination[0])) + 1}`, title: item.title, page: (await pdf.getPageIndex(destination[0])) + 1, parentId: null };
       } catch { return null; }
     }));
-    return resolved.filter((item): item is { title: string; page: number } => item !== null);
+    return resolved.filter((item): item is { id: string; title: string; page: number; parentId: null } => item !== null);
   }
 
   async function renderPage() {
@@ -81,8 +85,8 @@
     }
   }
 
-  async function go(target: number) { page = Math.min(Math.max(target, 1), pageCount || 1); scrollContainer.scrollTop = 0; await renderPage(); }
-  async function changeZoom(delta: number) { zoom = Math.min(Math.max(zoom + delta, .5), 4); await renderPage(); }
+  async function go(target: number) { page = Math.min(Math.max(target, 1), pageCount || 1); scrollContainer.scrollTop = 0; await renderPage(); onPosition(page, zoom, 0); }
+  async function changeZoom(delta: number) { zoom = Math.min(Math.max(zoom + delta, .5), 4); await renderPage(); onPosition(page, zoom, scrollContainer.scrollTop); }
   function selectText() {
     const selection = window.getSelection();
     const excerpt = selection?.toString().trim() ?? "";
@@ -93,7 +97,7 @@
 </script>
 
 <section class="pdf-viewer" aria-label="Встроенный PDF.js просмотрщик">
-  <div class="pdf-toolbar"><Button disabled={page <= 1} onclick={() => go(page - 1)}>Предыдущая</Button><label>Страница <input aria-label="Текущая страница" type="number" min="1" max={pageCount} bind:value={page} onchange={() => go(page)} /> из {pageCount}</label><Button disabled={page >= pageCount} onclick={() => go(page + 1)}>Следующая</Button><Button onclick={() => changeZoom(-.1)}>−</Button><span>{Math.round(zoom * 100)}%</span><Button onclick={() => changeZoom(.1)}>+</Button>{#if outline.length}<select aria-label="Встроенное оглавление" onchange={(event) => go(Number(event.currentTarget.value))}><option value="">Оглавление</option>{#each outline as item}<option value={item.page}>{item.title}</option>{/each}</select>{/if}</div>
+  <div class="pdf-toolbar"><Button disabled={page <= 1} onclick={() => go(page - 1)}>Предыдущая</Button><label>Страница <input aria-label="Текущая страница" type="number" min="1" max={pageCount} bind:value={page} onchange={() => go(page)} /> из {pageCount}</label><Button disabled={page >= pageCount} onclick={() => go(page + 1)}>Следующая</Button><Button aria-label="Уменьшить масштаб" onclick={() => changeZoom(-.1)}>−</Button><span>{Math.round(zoom * 100)}%</span><Button aria-label="Увеличить масштаб" onclick={() => changeZoom(.1)}>+</Button>{#if navigationOutline.length}<select aria-label="Оглавление книги" onchange={(event) => go(Number(event.currentTarget.value))}><option value="">Оглавление</option>{#each navigationOutline as item}<option value={item.page}>{item.parentId ? `↳ ${item.title}` : item.title}</option>{/each}</select>{/if}</div>
   {#if error}<p role="alert">Не удалось открыть PDF: {error}</p>{/if}
   <div class="pdf-scroll" bind:this={scrollContainer} onscroll={() => onPosition(page, zoom, scrollContainer.scrollTop)}><div class="pdf-page"><canvas bind:this={canvas}></canvas><div class="textLayer" bind:this={textLayerContainer}></div></div></div>
 </section>

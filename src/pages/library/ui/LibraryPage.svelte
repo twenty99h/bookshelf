@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { Button, NavigationItem, PageHeader, StatePanel, StatusMessage, TextField, WorkspaceShell } from "@/shared/ui";
   import { IdeaWorkbench } from "@/features/idea-workbench";
   import { PdfReader } from "@/features/pdf-reader";
@@ -19,6 +21,7 @@
     saveWorkspaceNote,
     restoreLatestSnapshot,
     searchLibrary,
+    startCodexLogin,
     type Book,
     type Idea,
     type LibraryAction,
@@ -57,6 +60,10 @@
   let debtDecision = $state("");
   let outlineTitle = $state("");
   let outlinePage = $state(1);
+  let positionTimer: ReturnType<typeof setTimeout> | undefined;
+  let codexLoginUrl = $state("");
+  let codexLoginCode = $state("");
+  let codexLoginRunning = $state(false);
 
   let debt = $derived((library?.drafts.length ?? 0) + (library?.reviews.filter((item) => item.pending).length ?? 0));
   let activeBook = $derived(library?.books.find((book) => book.id === library?.activeStudyBookId));
@@ -65,6 +72,10 @@
   );
 
   onMount(async () => {
+    void listen<{ kind: string; text: string }>("codex-login-event", (event) => {
+      if (event.payload.kind !== "deviceCode") return;
+      [codexLoginUrl, codexLoginCode] = event.payload.text.split("\n", 2);
+    });
     try {
       library = await loadLibrary();
       note = library.workspaceNote;
@@ -74,6 +85,13 @@
       loading = false;
     }
   });
+
+  async function loginCodex() {
+    codexLoginRunning = true; error = ""; codexLoginUrl = ""; codexLoginCode = "";
+    try { await startCodexLogin(); feedback = "Вход в Codex завершён"; }
+    catch (cause) { error = commandErrorMessage(cause); }
+    finally { codexLoginRunning = false; }
+  }
 
   async function run(action: LibraryAction, success = "Изменения сохранены") {
     busy = true; error = ""; feedback = "";
@@ -101,7 +119,26 @@
 
   async function savePosition() {
     if (!readingBook) return;
-    await run({ kind: "updateReading", bookId: readingBook.id, page: readingBook.reading?.page || 1, zoom: readingBook.reading?.zoom || 1, scroll: 0 }, "Место чтения сохранено");
+    await run({ kind: "updateReading", bookId: readingBook.id, page: readingBook.reading?.page || 1, zoom: readingBook.reading?.zoom || 1, scroll: readingBook.reading?.scroll || 0 }, "Место чтения сохранено");
+  }
+
+  function recordPosition(page: number, zoom: number, scroll: number) {
+    if (!readingBook) return;
+    readingBook.reading = { page, zoom, scroll };
+    if (positionTimer) clearTimeout(positionTimer);
+    const bookId = readingBook.id;
+    positionTimer = setTimeout(async () => {
+      try {
+        library = await executeLibraryAction({ kind: "updateReading", bookId, page, zoom, scroll });
+        readingBook = library.books.find((book) => book.id === bookId) ?? null;
+      } catch (cause) { error = commandErrorMessage(cause); }
+    }, 450);
+  }
+
+  async function acceptImportedOutline(importedOutline: Book["outline"]) {
+    if (!readingBook || readingBook.outline.length > 0) return;
+    readingBook.outline = importedOutline;
+    await saveOutline();
   }
 
   async function saveOutline() {
@@ -173,6 +210,11 @@
   }
 
   function navigate(target: View) { view = target; readingBook = null; settingsOpen = false; feedback = ""; error = ""; }
+  async function completeSession(sessionId: string) {
+    await run({ kind: "resolveSession", sessionId, status: "completed", reason: "" });
+    const change = library?.lastDebtChange ?? 0;
+    feedback = `Сеанс завершён. Долг ${change > 0 ? `вырос на ${change}` : change < 0 ? `уменьшился на ${Math.abs(change)}` : "не изменился"}`;
+  }
   function bookTitle(bookId: string) { return library?.books.find((book) => book.id === bookId)?.title ?? "Книга"; }
   function reviewPackage(idea: Idea) {
     const fragment = idea.fragments[0];
@@ -217,6 +259,10 @@
           <div><TextField id="archive-password" label="Пароль архива" bind:value={archivePassword} placeholder="Не менее 8 символов" disabled={busy} type="password" /><div class="form-actions"><Button onclick={exportArchive} disabled={busy || archivePassword.length < 8}>Экспортировать</Button><Button onclick={importArchive} disabled={busy || archivePassword.length < 8}>Импортировать</Button><Button onclick={async () => { try { library = await restoreLatestSnapshot(); feedback = "Последний снимок восстановлен"; } catch (cause) { error = commandErrorMessage(cause); } }}>Восстановить снимок</Button></div></div>
           <div><p class="eyebrow">Обновления</p><h2>Совместимая версия Bookshelf</h2><p>Устанавливаются только обновления с проверяемой подписью. При ошибке текущая версия и личная библиотека остаются без изменений.</p></div>
           <div class="form-actions"><Button onclick={async () => { try { const installed = await installSignedUpdate(); feedback = installed ? "Подписанное обновление установлено" : "У вас актуальная версия"; } catch (cause) { error = commandErrorMessage(cause); } }}>Проверить обновления</Button></div>
+          <div><p class="eyebrow">Ненавязчивое напоминание</p><h2>Долг изучения</h2><p>Одно системное уведомление появится только вне чтения, если объём долга не менялся выбранное число дней.</p></div>
+          <div class="form-actions"><label for="debt-days">Период без изменений</label><input id="debt-days" aria-label="Дней без изменения долга" type="number" min="1" max="90" value={library.debtReminderDays || 7} onchange={(event) => run({ kind: "setDebtReminder", days: Number(event.currentTarget.value) }, "Период напоминания сохранён")} /></div>
+          <div><p class="eyebrow">Необязательная проверка</p><h2>Вход в Codex</h2><p>Codex хранит вход в отдельном каталоге. Bookshelf не читает OAuth-токены и не переносит их в архив.</p></div>
+          <div><div class="form-actions"><Button disabled={codexLoginRunning} onclick={loginCodex}>{codexLoginRunning ? "Ожидаем вход…" : "Войти через ChatGPT"}</Button>{#if codexLoginUrl}<Button onclick={() => openUrl(codexLoginUrl)}>Открыть страницу входа</Button><strong aria-live="polite">Код: {codexLoginCode}</strong>{/if}</div></div>
         </section>
       {/if}
 
@@ -236,9 +282,9 @@
         {#if readingBook}
           <section class="reader">
             <header><div><p class="eyebrow">Чтение · страница {readingBook.reading?.page ?? 1}</p><h2>{readingBook.title}</h2></div><Button onclick={() => readingBook = null}>Закрыть</Button></header>
-            <PdfReader url={bookUrl} initialPage={readingBook.reading.page} initialZoom={readingBook.reading.zoom} initialScroll={readingBook.reading.scroll} onPosition={(page, zoom, scroll) => { readingBook!.reading = { page, zoom, scroll }; }} onSelection={(selected, nearby) => { excerpt = selected; context = nearby; }} />
+            <PdfReader url={bookUrl} savedOutline={readingBook.outline} initialPage={readingBook.reading.page} initialZoom={readingBook.reading.zoom} initialScroll={readingBook.reading.scroll} onPosition={recordPosition} onOutline={acceptImportedOutline} onSelection={(selected, nearby) => { excerpt = selected; context = nearby; }} />
             <div class="reader-tools">
-              <div><h3>Место чтения</h3><p>Bookshelf сохранит страницу и масштаб между запусками.</p><label for="reading-page">Страница</label><input id="reading-page" type="number" min="1" bind:value={readingBook.reading.page} /><label for="reading-zoom">Масштаб</label><input id="reading-zoom" type="number" min="0.5" max="4" step="0.1" bind:value={readingBook.reading.zoom} /><Button onclick={savePosition}>Сохранить место</Button> <Button onclick={() => run({ kind: "completeReading", bookId: readingBook!.id }, "Чтение завершено; изучение остаётся активным")}>Завершить чтение</Button><details><summary>Исправить оглавление</summary>{#each readingBook.outline ?? [] as item, index}<div class="outline-row"><input aria-label="Название раздела" bind:value={item.title} /><input aria-label="Страница раздела" type="number" min="1" bind:value={item.page} /><Button disabled={index === 0} onclick={() => { const list = readingBook!.outline; [list[index - 1], list[index]] = [list[index], list[index - 1]]; saveOutline(); }}>Выше</Button><Button onclick={() => { readingBook!.outline = readingBook!.outline.filter((candidate) => candidate.id !== item.id); saveOutline(); }}>Удалить</Button></div>{/each}<form class="outline-add" onsubmit={addOutlineItem}><input aria-label="Новый раздел" bind:value={outlineTitle} placeholder="Название главы" /><input aria-label="Страница нового раздела" type="number" min="1" bind:value={outlinePage} /><Button type="submit">Добавить</Button></form><Button onclick={saveOutline}>Сохранить правки</Button></details></div>
+              <div><h3>Место чтения</h3><p>Bookshelf автоматически сохраняет страницу, масштаб и позицию.</p><label for="reading-page">Страница</label><input id="reading-page" type="number" min="1" bind:value={readingBook.reading.page} /><label for="reading-zoom">Масштаб</label><input id="reading-zoom" type="number" min="0.5" max="4" step="0.1" bind:value={readingBook.reading.zoom} /><Button onclick={savePosition}>Сохранить сейчас</Button> <Button onclick={() => run({ kind: "completeReading", bookId: readingBook!.id }, "Чтение завершено; изучение остаётся активным")}>Завершить чтение</Button><details><summary>Исправить оглавление</summary>{#each readingBook.outline ?? [] as item, index}<div class="outline-row"><input aria-label="Название раздела" bind:value={item.title} /><input aria-label="Страница раздела" type="number" min="1" bind:value={item.page} /><select aria-label="Родительский раздел" bind:value={item.parentId}><option value={null}>Без родителя</option>{#each readingBook.outline.filter((candidate) => candidate.id !== item.id) as parent}<option value={parent.id}>{parent.title}</option>{/each}</select><Button disabled={index === 0} onclick={() => { const list = readingBook!.outline; [list[index - 1], list[index]] = [list[index], list[index - 1]]; saveOutline(); }}>Выше</Button><Button onclick={() => { readingBook!.outline = readingBook!.outline.filter((candidate) => candidate.id !== item.id).map((candidate) => candidate.parentId === item.id ? { ...candidate, parentId: null } : candidate); saveOutline(); }}>Удалить</Button></div>{/each}<form class="outline-add" onsubmit={addOutlineItem}><input aria-label="Новый раздел" bind:value={outlineTitle} placeholder="Название главы" /><input aria-label="Страница нового раздела" type="number" min="1" bind:value={outlinePage} /><Button type="submit">Добавить</Button></form><Button onclick={saveOutline}>Сохранить правки</Button></details></div>
               <form onsubmit={captureDraft}><h3>Черновая заметка</h3><label for="section">Глава или раздел</label><input id="section" bind:value={section} /><label for="excerpt">Выделенный фрагмент</label><textarea id="excerpt" bind:value={excerpt} required></textarea><label for="context">Непосредственный контекст</label><textarea id="context" bind:value={context}></textarea><label for="comment">Моя мысль (необязательно)</label><textarea id="comment" bind:value={comment}></textarea><Button type="submit">В очередь разбора</Button></form>
             </div>
           </section>
@@ -251,10 +297,10 @@
         {#if library.drafts.length === 0}<section class="empty compact"><h2>Очередь разобрана</h2><p>Новые фрагменты можно сохранить, не выходя из просмотрщика.</p></section>{:else}<section class="stack">{#each library.drafts as draft}<article class="work-card"><p class="eyebrow">{bookTitle(draft.bookId)} · {draft.section} · стр. {draft.page}</p><blockquote>{draft.excerpt}</blockquote>{#if draft.comment}<p>{draft.comment}</p>{/if}<label for={`idea-${draft.id}`}>Самостоятельная формулировка</label><textarea id={`idea-${draft.id}`} bind:value={formulation}></textarea><div class="card-actions"><Button variant="primary" onclick={() => resolveDraft(draft.id)}>Создать идею</Button><select aria-label="Идея для присоединения" bind:value={attachIdeaId}><option value="">Выберите идею</option>{#each library.ideas as idea}<option value={idea.id}>{idea.formulation}</option>{/each}</select><Button disabled={!attachIdeaId} onclick={() => run({ kind: "attachDraftToIdea", draftId: draft.id, ideaId: attachIdeaId }, "Фрагмент присоединён к идее")}>Присоединить</Button><Button onclick={() => exportDraft(draft.id)}>Экспортировать</Button><Button onclick={() => run({ kind: "discardDraft", draftId: draft.id }, "Черновая заметка удалена")}>Удалить</Button></div></article>{/each}</section>{/if}
       {:else if view === "ideas"}
         <section class="section-head"><div><h2>Темы знаний</h2><p>Темы и связи появляются только после вашего подтверждения.</p></div><form onsubmit={(event) => { event.preventDefault(); run({ kind: "createTopic", name: topicName }, "Тема создана"); topicName = ""; }}><input aria-label="Название темы" bind:value={topicName} placeholder="Например, архитектура данных" /><Button type="submit">Создать тему</Button></form></section>
-        {#if library.ideas.length === 0}<section class="empty compact"><h2>Здесь появятся ваши идеи</h2><p>Разберите черновую заметку, чтобы сохранить авторскую формулировку и источник.</p></section>{:else}<IdeaWorkbench {library} {run} {bookTitle} />{#if library.materials.length}<section class="stack review-packages" aria-label="Материалы для передачи">{#each library.materials as material}<article class="work-card"><p class="eyebrow">Материал для передачи</p><h2>{material.title}</h2><div class="card-actions"><Button onclick={async () => { await navigator.clipboard.writeText(`# ${material.title}\n\n${material.idea}`); feedback = "Материал скопирован"; }}>Скопировать</Button><Button onclick={() => exportMaterial(material.id, material.title)}>Сохранить Markdown</Button></div></article>{/each}</section>{/if}<section class="stack review-packages">{#each library.ideas as idea}<details class="work-card"><summary>Пакет ручной проверки: {idea.formulation}</summary><pre>{reviewPackage(idea)}</pre><Button onclick={async () => { await navigator.clipboard.writeText(reviewPackage(idea)); feedback = "Подтверждённый пакет скопирован"; }}>Скопировать подтверждённый пакет</Button></details>{/each}</section>{/if}
+        {#if library.ideas.length === 0}<section class="empty compact"><h2>Здесь появятся ваши идеи</h2><p>Разберите черновую заметку, чтобы сохранить авторскую формулировку и источник.</p></section>{:else}<IdeaWorkbench {library} {run} {bookTitle} onLibrary={(next) => { library = next; }} />{#if library.materials.length}<section class="stack review-packages" aria-label="Материалы для передачи">{#each library.materials as material}<article class="work-card"><p class="eyebrow">Материал для передачи</p><h2>{material.title}</h2><div class="card-actions"><Button onclick={async () => { await navigator.clipboard.writeText(`# ${material.title}\n\n${material.idea}`); feedback = "Материал скопирован"; }}>Скопировать</Button><Button onclick={() => exportMaterial(material.id, material.title)}>Сохранить Markdown</Button></div></article>{/each}</section>{/if}<section class="stack review-packages">{#each library.ideas as idea}<details class="work-card"><summary>Пакет ручной проверки: {idea.formulation}</summary><pre>{reviewPackage(idea)}</pre><Button onclick={async () => { await navigator.clipboard.writeText(reviewPackage(idea)); feedback = "Подтверждённый пакет скопирован"; }}>Скопировать подтверждённый пакет</Button></details>{/each}</section>{/if}
       {:else}
         <section class="study-grid"><article class="work-card"><p class="eyebrow">Недельный ритм</p><h2>{library.weeklySessionBudget || 3} сеанса</h2><p>Без дедлайна книги, нормы страниц и штрафов.</p><div class="rhythm">{#each [2, 3, 4, 5] as count}<button class:chosen={library.weeklySessionBudget === count} onclick={() => run({ kind: "setStudyRhythm", weeklySessionBudget: count }, "Недельный ритм сохранён")}>{count}</button>{/each}</div></article><article class="work-card"><p class="eyebrow">Новый сеанс</p><h2>С каким намерением?</h2><form onsubmit={(event) => { event.preventDefault(); run({ kind: "planSession", intention: sessionIntention, plannedAt: Math.floor(Date.now() / 1000) }, "Сеанс запланирован"); sessionIntention = ""; }}><textarea aria-label="Намерение сеанса" bind:value={sessionIntention} placeholder="Разобрать две заметки и продолжить главу" required></textarea><Button type="submit">Запланировать</Button></form></article></section>
-        {#if library.sessions.length}<section class="stack">{#each library.sessions as session}<article class="session"><div><b>{session.intention}</b><small>{session.status === "planned" ? "Запланирован" : session.status}</small></div>{#if session.status === "planned"}<div class="session-actions"><Button onclick={() => run({ kind: "resolveSession", sessionId: session.id, status: "completed", reason: "" }, `Сеанс завершён. Долг ${library!.lastDebtChange > 0 ? "вырос" : library!.lastDebtChange < 0 ? "уменьшился" : "не изменился"}`)}>Проведён</Button><select aria-label="Решение по пропущенному сеансу" bind:value={missedSessionStatus}><option value="moved">Перенести</option><option value="replaced">Заменить</option><option value="cancelled">Отменить</option></select><input aria-label="Причина решения" bind:value={missedSessionReason} placeholder="Почему план изменился" /><Button onclick={() => run({ kind: "resolveSession", sessionId: session.id, status: missedSessionStatus, reason: missedSessionReason }, "Решение по сеансу сохранено без штрафа")}>Сохранить решение</Button></div>{/if}</article>{/each}</section>{/if}
+        {#if library.sessions.length}<section class="stack">{#each library.sessions as session}<article class="session"><div><b>{session.intention}</b><small>{session.status === "planned" ? "Запланирован" : session.status}</small></div>{#if session.status === "planned"}<div class="session-actions"><Button onclick={() => completeSession(session.id)}>Проведён</Button><select aria-label="Решение по пропущенному сеансу" bind:value={missedSessionStatus}><option value="moved">Перенести</option><option value="replaced">Заменить</option><option value="cancelled">Отменить</option></select><input aria-label="Причина решения" bind:value={missedSessionReason} placeholder="Почему план изменился" /><Button onclick={() => run({ kind: "resolveSession", sessionId: session.id, status: missedSessionStatus, reason: missedSessionReason }, "Решение по сеансу сохранено без штрафа")}>Сохранить решение</Button></div>{/if}</article>{/each}</section>{/if}
         {#if activeBook}<form class="work-card retrospective" onsubmit={(event) => { event.preventDefault(); run({ kind: "completeStudy", bookId: activeBook!.id, retrospective, significantIdeaIds, continuingWork, debtDecision }, "Изучение завершено; продолжающаяся работа осталась доступна"); }}><p class="eyebrow">Явное завершение изучения</p><h2>Ретроспектива «{activeBook.title}»</h2><label for="retrospective">Результаты применения и изменения в понимании или действиях</label><textarea id="retrospective" bind:value={retrospective}></textarea><fieldset><legend>3–7 значимых идей</legend>{#each library.ideas.filter((idea) => idea.bookId === activeBook?.id) as idea}<label class="checkbox"><input type="checkbox" value={idea.id} bind:group={significantIdeaIds} /> {idea.formulation}</label>{/each}</fieldset><label for="continuing">Продолжающиеся эксперименты или восстановления</label><textarea id="continuing" bind:value={continuingWork}></textarea><label for="debt-decision">Решение по оставшемуся долгу</label><textarea id="debt-decision" bind:value={debtDecision}></textarea><Button variant="primary" type="submit">Завершить изучение</Button></form>{/if}
       {/if}
     {/if}
@@ -283,6 +329,6 @@
   .rhythm { display: flex; gap: 7px; }.rhythm button { width: 42px; height: 42px; border: 1px solid var(--color-rule); border-radius: 50%; background: white; }.rhythm button.chosen { border-color: #72843d; background: #eaf1c8; font-weight: 800; }
   .session { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--color-rule); padding: 15px 5px; }.session small { display: block; margin-top: 4px; color: var(--color-ink-muted); }.session-actions { display: flex; align-items: center; gap: 7px; }.session-actions select { width: auto; }.session-actions input { width: 210px; }
   .review-packages, .retrospective { margin-top: 20px; }.checkbox { display: flex; align-items: center; gap: 8px; margin: 7px 0; }.checkbox input { width: 18px; min-height: 18px; } fieldset { margin: 5px 0 10px; border: 1px solid var(--color-rule); border-radius: 8px; padding: 10px 13px; } legend { padding: 0 5px; color: #4d5861; font-size: 12px; font-weight: 700; }
-  .outline-row, .outline-add { display: grid; grid-template-columns: 1fr 90px auto auto; gap: 6px; margin: 8px 0; }.outline-add { grid-template-columns: 1fr 90px auto; }
+  .outline-row, .outline-add { display: grid; grid-template-columns: minmax(130px,1fr) 90px minmax(130px,.8fr) auto auto; gap: 6px; margin: 8px 0; }.outline-add { grid-template-columns: 1fr 90px auto; }
   @media (max-width: 640px) { .bookmark { grid-template-columns: 1fr; padding: 20px 20px 20px 27px; }.debt { border-top: 1px solid #ccd69e; border-left: 0; padding: 13px 0 0; text-align: left; }.settings-panel, .reader-tools, .study-grid { grid-template-columns: 1fr; }.books article { grid-template-columns: 72px 1fr; }.cover { min-height: 104px; }.section-head, .session, .session-actions { align-items: stretch; flex-direction: column; }.section-head form, .session-actions input, .session-actions select { width: 100%; }.outline-row, .outline-add { grid-template-columns: 1fr; } }
 </style>

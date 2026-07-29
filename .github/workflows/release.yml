@@ -10,7 +10,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       TAURI_CONFIG: >-
-        {"plugins":{"updater":{"pubkey":"${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}","endpoints":["${{ secrets.TAURI_UPDATER_ENDPOINT }}"]}}}
+        {"plugins":{"updater":{"pubkey":"${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}","endpoints":["${{ secrets.TAURI_UPDATER_ENDPOINT }}"]}},"bundle":{"externalBin":["binaries/codex"]}}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -22,12 +22,64 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
+      - name: Prepare pinned Codex sidecar
+        shell: pwsh
+        env:
+          CODEX_SIDECAR_URL: ${{ secrets.CODEX_SIDECAR_WINDOWS_URL }}
+          CODEX_SIDECAR_SHA256: ${{ secrets.CODEX_SIDECAR_WINDOWS_SHA256 }}
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          $target = "src-tauri/binaries/codex-x86_64-pc-windows-msvc.exe"
+          Invoke-WebRequest -Uri $env:CODEX_SIDECAR_URL -OutFile $target
+          $actual = (Get-FileHash -Algorithm SHA256 $target).Hash.ToLowerInvariant()
+          if ($actual -ne $env:CODEX_SIDECAR_SHA256.ToLowerInvariant()) { throw "Codex sidecar checksum mismatch" }
+          & $target --version
+          & $target app-server generate-json-schema --out src-tauri/codex-schema
+      - run: pnpm check
       - run: pnpm test
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: pnpm tauri build --bundles nsis
+      - name: Smoke install and launch without development tools on PATH
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          $install = Start-Process $installer.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
+          $app = Get-ChildItem "$env:LOCALAPPDATA" -Filter "bookshelf.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $app) { throw "Installed Bookshelf executable not found" }
+          $oldPath = $env:PATH
+          $env:PATH = "$env:WINDIR\System32"
+          $process = Start-Process $app.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "Bookshelf exited during desktop smoke test" }
+          Stop-Process -Id $process.Id
+          $env:PATH = $oldPath
       - uses: actions/upload-artifact@v4
         with:
           name: bookshelf-signed-windows-candidate
           path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
             src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/nsis/*latest.json
+
+  portable-pair-check:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check && pnpm test && pnpm build
+      - run: cargo test --manifest-path src-tauri/Cargo.toml

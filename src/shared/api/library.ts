@@ -21,9 +21,9 @@ export type Topic = { id: string; name: string };
 export type IdeaLink = { id: string; fromIdeaId: string; toIdeaId: string; relation: string };
 export type Experiment = { id: string; ideaId: string; situation: string; action: string; result: string; conclusion: string; successful: boolean; completed: boolean };
 export type Recall = { id: string; ideaId: string; answer: string; rating: string; nextAt: number };
-export type StudySession = { id: string; intention: string; plannedAt: number; status: string; resolutionReason: string };
+export type StudySession = { id: string; intention: string; plannedAt: number; status: string; resolutionReason: string; debtAtStart: number };
 export type TransferMaterial = { id: string; title: string; problem: string; idea: string; example: string; result: string; limitations: string; ideaIds: string[] };
-export type IdeaReview = { id: string; ideaId: string; decision: string; conclusion: string; pending: boolean };
+export type IdeaReview = { id: string; ideaId: string; requestKind: string; response: string; decision: string; conclusion: string; pending: boolean; reviewedAt: number };
 export type Retrospective = { text: string; significantIdeaIds: string[]; continuingWork: string; debtDecision: string };
 
 export type LibraryState = {
@@ -43,6 +43,7 @@ export type LibraryState = {
   lastDebtChange: number;
   lastDebtChangedAt: number;
   debtNotificationSentAt?: number | null;
+  debtReminderDays: number;
 };
 
 export type LibraryAction =
@@ -56,6 +57,7 @@ export type LibraryAction =
   | { kind: "activateStudy"; bookId: string }
   | { kind: "completeReading"; bookId: string }
   | { kind: "setStudyRhythm"; weeklySessionBudget: number }
+  | { kind: "setDebtReminder"; days: number }
   | { kind: "planSession"; intention: string; plannedAt: number }
   | { kind: "resolveSession"; sessionId: string; status: string; reason: string }
   | { kind: "updateIdea"; ideaId: string; formulation: string; assignments: string[] }
@@ -73,7 +75,7 @@ type CommandError = { code?: string; message?: string };
 
 const emptyFields: Omit<LibraryState, "books" | "workspaceNote"> = {
   drafts: [], ideas: [], topics: [], ideaLinks: [], experiments: [], recalls: [], sessions: [], materials: [], reviews: [],
-  activeStudyBookId: null, weeklySessionBudget: 3, lastDebtChange: 0, lastDebtChangedAt: 0, debtNotificationSentAt: null,
+  activeStudyBookId: null, weeklySessionBudget: 3, lastDebtChange: 0, lastDebtChangedAt: 0, debtNotificationSentAt: null, debtReminderDays: 7,
 };
 
 function normalizeLibrary(value: Partial<LibraryState>): LibraryState {
@@ -92,6 +94,11 @@ export async function restoreLatestSnapshot(): Promise<LibraryState> { return no
 export async function exportMaterialMarkdown(materialId: string, path: string): Promise<void> { return invoke("export_material_markdown", { materialId, path }); }
 export async function exportDraftMarkdown(draftId: string, path: string): Promise<LibraryState> { return normalizeLibrary(await invoke<LibraryState>("export_draft_markdown", { draftId, path })); }
 export async function installSignedUpdate(): Promise<boolean> { return invoke<boolean>("install_signed_update"); }
+export async function runCodexReview(requestId: string, ideaId: string, requestKind: string, reviewPackage: string): Promise<LibraryState> {
+  return normalizeLibrary(await invoke<LibraryState>("run_codex_review", { requestId, ideaId, requestKind, package: reviewPackage }));
+}
+export async function cancelCodexReview(requestId: string): Promise<void> { return invoke("cancel_codex_review", { requestId }); }
+export async function startCodexLogin(): Promise<void> { return invoke("start_codex_login"); }
 
 export function commandErrorMessage(cause: unknown): string {
   if (typeof cause === "object" && cause !== null) {

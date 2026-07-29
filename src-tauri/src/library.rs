@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs,
     io::{self, Write},
     iter,
@@ -30,6 +31,7 @@ pub struct LibraryState {
     pub last_debt_change: i32,
     pub last_debt_changed_at: u64,
     pub debt_notification_sent_at: Option<u64>,
+    pub debt_reminder_days: u16,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -200,6 +202,7 @@ pub struct StudySession {
     pub planned_at: u64,
     pub status: String,
     pub resolution_reason: String,
+    pub debt_at_start: usize,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -220,9 +223,12 @@ pub struct TransferMaterial {
 pub struct IdeaReview {
     pub id: String,
     pub idea_id: String,
+    pub request_kind: String,
+    pub response: String,
     pub decision: String,
     pub conclusion: String,
     pub pending: bool,
+    pub reviewed_at: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -280,6 +286,9 @@ pub enum LibraryAction {
     SetStudyRhythm {
         weekly_session_budget: u8,
     },
+    SetDebtReminder {
+        days: u16,
+    },
     PlanSession {
         intention: String,
         planned_at: u64,
@@ -328,6 +337,11 @@ pub enum LibraryAction {
         result: String,
         limitations: String,
         idea_ids: Vec<String>,
+    },
+    RecordReviewResponse {
+        idea_id: String,
+        request_kind: String,
+        response: String,
     },
     ResolveReview {
         idea_id: String,
@@ -408,6 +422,36 @@ impl LibraryState {
                     return Err(DomainError::new(
                         "outline_item_invalid",
                         "Укажите название и страницу раздела",
+                    ));
+                }
+                let ids = outline
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<HashSet<_>>();
+                let unique_ids = ids.len() == outline.len();
+                let parents_exist = outline.iter().all(|item| {
+                    item.parent_id
+                        .as_deref()
+                        .is_none_or(|parent| parent != item.id && ids.contains(parent))
+                });
+                let has_cycle = outline.iter().any(|item| {
+                    let mut seen = HashSet::from([item.id.as_str()]);
+                    let mut parent = item.parent_id.as_deref();
+                    while let Some(parent_id) = parent {
+                        if !seen.insert(parent_id) {
+                            return true;
+                        }
+                        parent = outline
+                            .iter()
+                            .find(|candidate| candidate.id == parent_id)
+                            .and_then(|candidate| candidate.parent_id.as_deref());
+                    }
+                    false
+                });
+                if !unique_ids || !parents_exist || has_cycle {
+                    return Err(DomainError::new(
+                        "outline_structure_invalid",
+                        "Проверьте вложенность и уникальность разделов",
                     ));
                 }
                 find_book_mut(self, &book_id)?.outline = outline;
@@ -525,6 +569,16 @@ impl LibraryState {
                 }
                 self.weekly_session_budget = weekly_session_budget;
             }
+            LibraryAction::SetDebtReminder { days } => {
+                if !(1..=90).contains(&days) {
+                    return Err(DomainError::new(
+                        "debt_reminder_invalid",
+                        "Выберите период от 1 до 90 дней",
+                    ));
+                }
+                self.debt_reminder_days = days;
+                self.debt_notification_sent_at = None;
+            }
             LibraryAction::PlanSession {
                 intention,
                 planned_at,
@@ -541,6 +595,7 @@ impl LibraryState {
                     planned_at,
                     status: "planned".into(),
                     resolution_reason: String::new(),
+                    debt_at_start: self.debt(),
                 });
             }
             LibraryAction::ResolveSession {
@@ -720,6 +775,31 @@ impl LibraryState {
                     idea_ids,
                 });
             }
+            LibraryAction::RecordReviewResponse {
+                idea_id,
+                request_kind,
+                response,
+            } => {
+                find_idea(self, &idea_id)?;
+                if response.trim().is_empty() {
+                    return Err(DomainError::new(
+                        "review_response_empty",
+                        "Codex не вернул текст проверки",
+                    ));
+                }
+                self.reviews
+                    .retain(|item| item.idea_id != idea_id || !item.pending);
+                self.reviews.push(IdeaReview {
+                    id: new_id("review"),
+                    idea_id,
+                    request_kind,
+                    response,
+                    decision: String::new(),
+                    conclusion: String::new(),
+                    pending: true,
+                    reviewed_at: now(),
+                });
+            }
             LibraryAction::ResolveReview {
                 idea_id,
                 decision,
@@ -740,13 +820,32 @@ impl LibraryState {
                         assignments: find_idea(self, &idea_id)?.assignments.clone(),
                     })?;
                 }
-                self.reviews.retain(|item| item.idea_id != idea_id);
+                let existing = self
+                    .reviews
+                    .iter()
+                    .find(|item| item.idea_id == idea_id && item.pending)
+                    .cloned();
+                self.reviews
+                    .retain(|item| item.idea_id != idea_id || !item.pending);
                 self.reviews.push(IdeaReview {
-                    id: new_id("review"),
+                    id: existing
+                        .as_ref()
+                        .map(|item| item.id.clone())
+                        .unwrap_or_else(|| new_id("review")),
                     idea_id,
+                    request_kind: existing
+                        .as_ref()
+                        .map(|item| item.request_kind.clone())
+                        .unwrap_or_else(|| "ideaReview".into()),
+                    response: if decision == "later" {
+                        existing.map(|item| item.response).unwrap_or_default()
+                    } else {
+                        String::new()
+                    },
                     decision: decision.clone(),
                     conclusion,
                     pending: decision == "later",
+                    reviewed_at: now(),
                 });
             }
             LibraryAction::CompleteStudy {
@@ -882,8 +981,19 @@ impl Library {
     pub fn apply(&self, action: LibraryAction) -> Result<LibraryState, LibraryError> {
         let mut state = self.load()?;
         let previous_debt = state.debt() as i32;
+        let session_debt_baseline = match &action {
+            LibraryAction::ResolveSession {
+                session_id, status, ..
+            } if status == "completed" => state
+                .sessions
+                .iter()
+                .find(|session| &session.id == session_id)
+                .map(|session| session.debt_at_start as i32),
+            _ => None,
+        };
         state.apply(action)?;
-        state.last_debt_change = state.debt() as i32 - previous_debt;
+        state.last_debt_change =
+            state.debt() as i32 - session_debt_baseline.unwrap_or(previous_debt);
         if state.last_debt_change != 0 {
             state.last_debt_changed_at = now();
             state.debt_notification_sent_at = None;
@@ -898,11 +1008,13 @@ impl Library {
             .map_err(io::Error::other)
     }
 
-    pub fn claim_debt_notification(
-        &self,
-        quiet_period_seconds: u64,
-    ) -> Result<Option<usize>, LibraryError> {
+    pub fn claim_debt_notification(&self) -> Result<Option<usize>, LibraryError> {
         let mut state = self.load()?;
+        let quiet_period_seconds = u64::from(if state.debt_reminder_days == 0 {
+            7
+        } else {
+            state.debt_reminder_days
+        }) * 86_400;
         let due = state.debt() > 0
             && state.last_debt_changed_at > 0
             && now().saturating_sub(state.last_debt_changed_at) >= quiet_period_seconds
@@ -1512,6 +1624,181 @@ mod tests {
         });
         assert_eq!(result.unwrap_err().code, "retrospective_required");
         assert_eq!(state.active_study_book_id.as_deref(), Some("book"));
+    }
+
+    #[test]
+    fn corrected_outline_rejects_cycles_and_duplicate_ids() {
+        let mut state = LibraryState::default();
+        state.books.push(Book::for_test("book", "Книга"));
+        let result = state.apply(LibraryAction::SaveOutline {
+            book_id: "book".into(),
+            outline: vec![
+                OutlineItem {
+                    id: "chapter".into(),
+                    title: "Глава".into(),
+                    page: 1,
+                    parent_id: Some("section".into()),
+                },
+                OutlineItem {
+                    id: "section".into(),
+                    title: "Раздел".into(),
+                    page: 2,
+                    parent_id: Some("chapter".into()),
+                },
+            ],
+        });
+        assert_eq!(result.unwrap_err().code, "outline_structure_invalid");
+
+        let duplicate = state.apply(LibraryAction::SaveOutline {
+            book_id: "book".into(),
+            outline: vec![
+                OutlineItem {
+                    id: "same".into(),
+                    title: "Один".into(),
+                    page: 1,
+                    parent_id: None,
+                },
+                OutlineItem {
+                    id: "same".into(),
+                    title: "Два".into(),
+                    page: 2,
+                    parent_id: None,
+                },
+            ],
+        });
+        assert_eq!(duplicate.unwrap_err().code, "outline_structure_invalid");
+    }
+
+    #[test]
+    fn recall_rating_owns_the_default_schedule_but_accepts_reader_override() {
+        let mut state = LibraryState::default();
+        state.ideas.push(Idea::for_test("idea", "book"));
+        state
+            .apply(LibraryAction::CompleteRecall {
+                idea_id: "idea".into(),
+                answer: "Суть, условия и ограничения".into(),
+                rating: "partial".into(),
+                next_at: Some(123_456),
+            })
+            .unwrap();
+        assert_eq!(state.recalls[0].next_at, 123_456);
+        assert_eq!(state.recalls[0].rating, "partial");
+    }
+
+    #[test]
+    fn review_response_is_temporary_until_the_reader_resolves_it() {
+        let mut state = LibraryState::default();
+        state.ideas.push(Idea::for_test("idea", "book"));
+        state
+            .apply(LibraryAction::RecordReviewResponse {
+                idea_id: "idea".into(),
+                request_kind: "ideaReview".into(),
+                response: "Возможный пробел".into(),
+            })
+            .unwrap();
+        assert_eq!(state.reviews[0].response, "Возможный пробел");
+        assert!(state.reviews[0].pending);
+
+        state
+            .apply(LibraryAction::ResolveReview {
+                idea_id: "idea".into(),
+                decision: "unchanged".into(),
+                formulation: "".into(),
+                conclusion: "Проверил ограничение".into(),
+            })
+            .unwrap();
+        assert!(state.reviews[0].response.is_empty());
+        assert!(!state.reviews[0].pending);
+        assert_eq!(state.reviews[0].decision, "unchanged");
+    }
+
+    #[test]
+    fn completing_a_session_reports_debt_change_since_it_was_planned() {
+        let data_dir = test_data_dir();
+        let library = Library::open(&data_dir).unwrap();
+        let mut state = LibraryState::default();
+        state.books.push(Book::for_test("book", "Книга"));
+        library.replace_state(&state).unwrap();
+        let planned = library
+            .apply(LibraryAction::PlanSession {
+                intention: "Продолжить чтение".into(),
+                planned_at: 10,
+            })
+            .unwrap();
+        let session_id = planned.sessions[0].id.clone();
+        library
+            .apply(LibraryAction::CaptureDraft {
+                book_id: "book".into(),
+                section: "Глава".into(),
+                page: 1,
+                excerpt: "Фрагмент".into(),
+                context: "".into(),
+                comment: "".into(),
+            })
+            .unwrap();
+        let completed = library
+            .apply(LibraryAction::ResolveSession {
+                session_id,
+                status: "completed".into(),
+                reason: "".into(),
+            })
+            .unwrap();
+        assert_eq!(completed.last_debt_change, 1);
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn reading_position_and_corrected_outline_survive_reopening() {
+        let data_dir = test_data_dir();
+        let library = Library::open(&data_dir).unwrap();
+        let mut state = LibraryState::default();
+        state.books.push(Book::for_test("book", "Книга"));
+        library.replace_state(&state).unwrap();
+        library
+            .apply(LibraryAction::UpdateReading {
+                book_id: "book".into(),
+                page: 37,
+                zoom: 1.4,
+                scroll: 812.0,
+            })
+            .unwrap();
+        library
+            .apply(LibraryAction::SaveOutline {
+                book_id: "book".into(),
+                outline: vec![OutlineItem {
+                    id: "chapter".into(),
+                    title: "Исправленная глава".into(),
+                    page: 36,
+                    parent_id: None,
+                }],
+            })
+            .unwrap();
+        let reopened = Library::open(&data_dir).unwrap().load().unwrap();
+        assert_eq!(
+            reopened.books[0].reading,
+            ReadingPosition {
+                page: 37,
+                zoom: 1.4,
+                scroll: 812.0
+            }
+        );
+        assert_eq!(reopened.books[0].outline[0].title, "Исправленная глава");
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn unchanged_debt_produces_only_one_notification_after_the_configured_period() {
+        let data_dir = test_data_dir();
+        let library = Library::open(&data_dir).unwrap();
+        let mut state = LibraryState::default();
+        state.books.push(Book::for_test("book", "Книга"));
+        state.drafts.push(DraftNote::for_test("draft", "book"));
+        state.debt_reminder_days = 3;
+        state.last_debt_changed_at = now() - 4 * 86_400;
+        library.replace_state(&state).unwrap();
+        assert_eq!(library.claim_debt_notification().unwrap(), Some(1));
+        assert_eq!(library.claim_debt_notification().unwrap(), None);
+        fs::remove_dir_all(data_dir).unwrap();
     }
 
     #[test]

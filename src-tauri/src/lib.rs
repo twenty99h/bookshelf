@@ -1,14 +1,23 @@
+mod codex;
 mod library;
 
+use codex::{CodexAdapter, CodexError, CodexStreamEvent};
 use library::{Library, LibraryAction, LibraryError, LibraryState, SearchResult};
 use serde::Serialize;
-use std::sync::Mutex;
-use tauri::Manager;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
+use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
 struct AppState {
     library: Mutex<Library>,
+    codex_cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 #[derive(Serialize)]
@@ -41,6 +50,13 @@ impl CommandError {
             LibraryError::Io(error) => Self::persistence("изменить личную библиотеку", error),
         }
     }
+
+    fn from_codex(error: CodexError) -> Self {
+        Self {
+            code: error.code,
+            message: error.message,
+        }
+    }
 }
 
 #[tauri::command]
@@ -55,7 +71,7 @@ fn load_library(
     let snapshot = library
         .load()
         .map_err(|error| CommandError::persistence("открыть личную библиотеку", error))?;
-    if let Ok(Some(debt)) = library.claim_debt_notification(7 * 86_400) {
+    if let Ok(Some(debt)) = library.claim_debt_notification() {
         let _ = app
             .notification()
             .builder()
@@ -245,6 +261,94 @@ async fn install_signed_update(app: tauri::AppHandle) -> Result<bool, CommandErr
     Ok(true)
 }
 
+#[tauri::command]
+async fn run_codex_review(
+    app: tauri::AppHandle,
+    request_id: String,
+    idea_id: String,
+    request_kind: String,
+    package: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<LibraryState, CommandError> {
+    let cancellation = Arc::new(AtomicBool::new(false));
+    state
+        .codex_cancellations
+        .lock()
+        .map_err(|_| CommandError::library_access())?
+        .insert(request_id.clone(), cancellation.clone());
+    let data_dir = app.path().app_data_dir().map_err(|error| CommandError {
+        code: "codex_state_unavailable",
+        message: format!("Не удалось подготовить изолированное состояние Codex: {error}"),
+    })?;
+    let adapter = CodexAdapter::bundled(&data_dir).map_err(|error| CommandError {
+        code: "codex_state_unavailable",
+        message: format!("Не удалось подготовить изолированное состояние Codex: {error}"),
+    })?;
+    let event_app = app.clone();
+    let result = adapter
+        .review(
+            &request_id,
+            &package,
+            cancellation,
+            move |event: CodexStreamEvent| {
+                let _ = event_app.emit("codex-review-event", event);
+            },
+        )
+        .await;
+    state
+        .codex_cancellations
+        .lock()
+        .map_err(|_| CommandError::library_access())?
+        .remove(&request_id);
+    let response = result.map_err(CommandError::from_codex)?;
+    state
+        .library
+        .lock()
+        .map_err(|_| CommandError::library_access())?
+        .apply(LibraryAction::RecordReviewResponse {
+            idea_id,
+            request_kind,
+            response,
+        })
+        .map_err(CommandError::from_library)
+}
+
+#[tauri::command]
+async fn start_codex_login(app: tauri::AppHandle) -> Result<(), CommandError> {
+    let data_dir = app.path().app_data_dir().map_err(|error| CommandError {
+        code: "codex_state_unavailable",
+        message: format!("Не удалось подготовить изолированное состояние Codex: {error}"),
+    })?;
+    let adapter = CodexAdapter::bundled(&data_dir).map_err(|error| CommandError {
+        code: "codex_state_unavailable",
+        message: format!("Не удалось подготовить изолированное состояние Codex: {error}"),
+    })?;
+    let event_app = app.clone();
+    adapter
+        .login(move |event| {
+            let _ = event_app.emit("codex-login-event", event);
+        })
+        .await
+        .map_err(CommandError::from_codex)
+}
+
+#[tauri::command]
+fn cancel_codex_review(
+    request_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), CommandError> {
+    let cancellations = state
+        .codex_cancellations
+        .lock()
+        .map_err(|_| CommandError::library_access())?;
+    let cancellation = cancellations.get(&request_id).ok_or(CommandError {
+        code: "codex_review_not_running",
+        message: "Активная проверка не найдена".into(),
+    })?;
+    cancellation.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -256,6 +360,7 @@ pub fn run() {
             let library = Library::open(data_dir)?;
             app.manage(AppState {
                 library: Mutex::new(library),
+                codex_cancellations: Mutex::new(HashMap::new()),
             });
             Ok(())
         })
@@ -272,6 +377,9 @@ pub fn run() {
             export_material_markdown,
             export_draft_markdown,
             install_signed_update,
+            run_codex_review,
+            cancel_codex_review,
+            start_codex_login,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
