@@ -16,25 +16,13 @@
     onOutline,
   }: {
     url: string;
-    savedOutline?: {
-      id: string;
-      title: string;
-      page: number;
-      parentId?: string | null;
-    }[];
+    savedOutline?: { id: string; title: string; page: number; parentId?: string | null }[];
     initialPage?: number;
     initialZoom?: number;
     initialScroll?: number;
     onPosition: (page: number, zoom: number, scroll: number) => void;
     onSelection: (excerpt: string, context: string) => void;
-    onOutline: (
-      outline: {
-        id: string;
-        title: string;
-        page: number;
-        parentId: string | null;
-      }[],
-    ) => void;
+    onOutline: (outline: { id: string; title: string; page: number; parentId: string | null }[]) => void;
   } = $props();
   let canvas: HTMLCanvasElement;
   let textLayerContainer: HTMLDivElement;
@@ -43,12 +31,8 @@
   let page = $state(1);
   let zoom = $state(1);
   let pageCount = $state(0);
-  let embeddedOutline = $state<
-    { id: string; title: string; page: number; parentId: string | null }[]
-  >([]);
-  let navigationOutline = $derived(
-    savedOutline.length > 0 ? savedOutline : embeddedOutline,
-  );
+  let embeddedOutline = $state<{ id: string; title: string; page: number; parentId: string | null }[]>([]);
+  let navigationOutline = $derived(savedOutline.length > 0 ? savedOutline : embeddedOutline);
   let error = $state("");
   let rendering = false;
   let pending = false;
@@ -57,8 +41,7 @@
   onMount(() => {
     void initialize();
     globalThis.document.addEventListener("selectionchange", selectText);
-    return () =>
-      globalThis.document.removeEventListener("selectionchange", selectText);
+    return () => globalThis.document.removeEventListener("selectionchange", selectText);
   });
 
   async function initialize() {
@@ -67,11 +50,15 @@
       pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
       page = initialPage;
       zoom = initialZoom;
-      pdfDocument = await pdfjs.getDocument({ url }).promise;
+      pdfDocument = await pdfjs.getDocument({
+        url,
+        wasmUrl: "/pdfjs/wasm/",
+        isImageDecoderSupported: false,
+        isOffscreenCanvasSupported: false,
+      }).promise;
       pageCount = pdfDocument.numPages;
       embeddedOutline = await readOutline(pdfDocument);
-      if (savedOutline.length === 0 && embeddedOutline.length > 0)
-        onOutline(embeddedOutline);
+      if (savedOutline.length === 0 && embeddedOutline.length > 0) onOutline(embeddedOutline);
       await renderPage();
       scrollContainer.scrollTop = initialScroll;
     } catch (cause) {
@@ -82,20 +69,12 @@
   async function readOutline(pdf: PDFDocumentProxy) {
     const items = await pdf.getOutline();
     if (!items) return [];
-    const resolved: {
-      id: string;
-      title: string;
-      page: number;
-      parentId: string | null;
-    }[] = [];
+    const resolved: { id: string; title: string; page: number; parentId: string | null }[] = [];
     async function visit(nodes: typeof items, parentId: string | null) {
       for (const item of nodes) {
         let itemId = parentId;
         try {
-          const destination =
-            typeof item.dest === "string"
-              ? await pdf.getDestination(item.dest)
-              : item.dest;
+          const destination = typeof item.dest === "string" ? await pdf.getDestination(item.dest) : item.dest;
           if (destination) {
             const page = (await pdf.getPageIndex(destination[0])) + 1;
             itemId = `pdf-${resolved.length}-${page}`;
@@ -130,18 +109,10 @@
       textLayerContainer.replaceChildren();
       textLayerContainer.style.width = `${viewport.width}px`;
       textLayerContainer.style.height = `${viewport.height}px`;
-      await pdfPage.render({
-        canvas,
-        canvasContext: canvas.getContext("2d")!,
-        viewport,
-        transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
-      }).promise;
+      await pdfPage.render({ canvas, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0] })
+        .promise;
       const text = await pdfPage.getTextContent();
-      await new pdfjs.TextLayer({
-        textContentSource: text,
-        container: textLayerContainer,
-        viewport,
-      }).render();
+      await new pdfjs.TextLayer({ textContentSource: text, container: textLayerContainer, viewport }).render();
     } finally {
       rendering = false;
       if (pending) await renderPage();
@@ -162,28 +133,18 @@
   function selectText() {
     const selection = window.getSelection();
     const excerpt = selection?.toString().trim() ?? "";
-    if (
-      !excerpt ||
-      !selection?.anchorNode ||
-      !textLayerContainer.contains(selection.anchorNode)
-    )
-      return;
-    const context =
-      textLayerContainer.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    if (!excerpt || !selection?.anchorNode || !textLayerContainer.contains(selection.anchorNode)) return;
+    const context = textLayerContainer.textContent?.replace(/\s+/g, " ").trim() ?? "";
     onSelection(
       excerpt,
-      context.slice(
-        Math.max(0, context.indexOf(excerpt) - 180),
-        context.indexOf(excerpt) + excerpt.length + 180,
-      ),
+      context.slice(Math.max(0, context.indexOf(excerpt) - 180), context.indexOf(excerpt) + excerpt.length + 180),
     );
   }
 </script>
 
 <section class="pdf-viewer" aria-label="Встроенный PDF.js просмотрщик">
   <div class="pdf-toolbar">
-    <Button disabled={page <= 1} onclick={() => go(page - 1)}>Предыдущая</Button
-    ><label
+    <Button disabled={page <= 1} onclick={() => go(page - 1)}>Предыдущая</Button><label
       >Страница <input
         aria-label="Текущая страница"
         type="number"
@@ -193,19 +154,15 @@
         onchange={() => go(page)}
       />
       из {pageCount}</label
-    ><Button disabled={page >= pageCount} onclick={() => go(page + 1)}
-      >Следующая</Button
-    ><Button aria-label="Уменьшить масштаб" onclick={() => changeZoom(-0.1)}
-      >−</Button
-    ><span>{Math.round(zoom * 100)}%</span><Button
-      aria-label="Увеличить масштаб"
-      onclick={() => changeZoom(0.1)}>+</Button
+    ><Button disabled={page >= pageCount} onclick={() => go(page + 1)}>Следующая</Button><Button
+      aria-label="Уменьшить масштаб"
+      onclick={() => changeZoom(-0.1)}>−</Button
+    ><span>{Math.round(zoom * 100)}%</span><Button aria-label="Увеличить масштаб" onclick={() => changeZoom(0.1)}
+      >+</Button
     >{#if navigationOutline.length}<select
         aria-label="Оглавление книги"
         onchange={(event) => go(Number(event.currentTarget.value))}
-        ><option value="">Оглавление</option
-        ><!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 09): key legacy outline options in the reading slice. -->
-        {#each navigationOutline as item}<option value={item.page}
+        ><option value="">Оглавление</option>{#each navigationOutline as item (item.id)}<option value={item.page}
             >{item.parentId ? `↳ ${item.title}` : item.title}</option
           >{/each}</select
       >{/if}
