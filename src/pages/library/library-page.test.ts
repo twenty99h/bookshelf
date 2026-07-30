@@ -544,38 +544,43 @@ test("mutating actions execute in order and replace the snapshot atomically", as
   expect(await screen.findByRole("heading", { name: "3 сеанса" })).toBeTruthy();
 });
 
-test("a late older snapshot cannot replace a newer command result", async () => {
+test("snapshot-producing mutations execute in request order", async () => {
   const slowImport = deferred<LibraryState | null>();
+  const execute = vi.fn(async () => libraryState({ weeklySessionBudget: 2 }));
   const commands = fakeCommands({
     importPdf: vi.fn(() => slowImport.promise),
-    execute: vi.fn(async () => libraryState({ weeklySessionBudget: 2 })),
+    execute,
   });
   render(LibraryPage, { props: { commands } });
   await fireEvent.click(await screen.findByRole("button", { name: "Изучение" }));
 
   void fireEvent.click(screen.getByRole("button", { name: "Импортировать PDF" }));
   await fireEvent.click(screen.getByRole("button", { name: "2" }));
-  expect(await screen.findByRole("heading", { name: "2 сеанса" })).toBeTruthy();
+  expect(execute).not.toHaveBeenCalled();
   slowImport.resolve(libraryState({ weeklySessionBudget: 5, books: [book("late", "Устаревшая книга")] }));
 
+  await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+  await fireEvent.click(screen.getByRole("button", { name: "Изучение" }));
   expect(await screen.findByRole("heading", { name: "2 сеанса" })).toBeTruthy();
   expect(screen.queryByText("Устаревшая книга")).toBeNull();
 });
 
-test("a late snapshot restore cannot replace a newer queued mutation", async () => {
+test("snapshot restore is serialized with a later mutation", async () => {
   const slowRestore = deferred<LibraryState>();
+  const execute = vi.fn(async () => libraryState({ weeklySessionBudget: 4 }));
   const commands = fakeCommands({
     restoreLatestSnapshot: vi.fn(() => slowRestore.promise),
-    execute: vi.fn(async () => libraryState({ weeklySessionBudget: 4 })),
+    execute,
   });
   render(LibraryPage, { props: { commands } });
   await fireEvent.click(await screen.findByRole("button", { name: "Настройки" }));
   void fireEvent.click(screen.getByRole("button", { name: "Восстановить снимок" }));
   await fireEvent.click(screen.getByRole("button", { name: "Изучение" }));
   await fireEvent.click(screen.getByRole("button", { name: "4" }));
-  expect(await screen.findByRole("heading", { name: "4 сеанса" })).toBeTruthy();
+  expect(execute).not.toHaveBeenCalled();
 
   slowRestore.resolve(libraryState({ weeklySessionBudget: 2, workspaceNote: "Устаревший снимок" }));
+  await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
   expect(await screen.findByRole("heading", { name: "4 сеанса" })).toBeTruthy();
 });
 

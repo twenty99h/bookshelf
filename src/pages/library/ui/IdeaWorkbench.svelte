@@ -30,15 +30,13 @@
     commands,
     run,
     bookTitle,
-    onLibrary,
-    onSnapshotRequest,
+    mutate,
   }: {
     library: LibraryState;
     commands: LibraryCommands;
     run: (action: LibraryAction, success?: string) => Promise<void>;
     bookTitle: (bookId: string) => string;
-    onLibrary: (state: LibraryState, order?: number) => void;
-    onSnapshotRequest: () => number;
+    mutate: (command: () => Promise<LibraryState>, success: string) => Promise<LibraryState>;
   } = $props();
   let selectedId = $state("");
   let formulation = $state("");
@@ -151,21 +149,22 @@
   }
   async function startReview() {
     if (!reviewIdea || reviewRunning) return;
+    const idea = reviewIdea;
     reviewRequestId = crypto.randomUUID();
     reviewResponse = "";
     reviewError = "";
     reviewRunning = true;
-    const order = onSnapshotRequest();
     try {
-      onLibrary(
-        await commands.runCodexReview(
-          reviewRequestId,
-          reviewIdea.id,
-          reviewKind,
-          reviewPackageText,
-          reviewRecallAnswer || undefined,
-        ),
-        order,
+      await mutate(
+        () =>
+          commands.runCodexReview(
+            reviewRequestId,
+            idea.id,
+            reviewKind,
+            reviewPackageText,
+            reviewRecallAnswer || undefined,
+          ),
+        "Ответ Codex получен",
       );
     } catch (cause) {
       reviewError = commandErrorMessage(cause);

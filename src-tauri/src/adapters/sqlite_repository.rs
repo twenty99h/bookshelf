@@ -21,6 +21,10 @@ pub struct Library {
     database_file: PathBuf,
 }
 
+pub(crate) struct ReadingStorage<'a>(&'a Library);
+pub(crate) struct ArchiveStorage<'a>(&'a Library);
+pub(crate) struct TextFileStorage;
+
 #[derive(Deserialize, Serialize)]
 struct ArchiveManifest {
     version: u32,
@@ -28,6 +32,18 @@ struct ArchiveManifest {
 }
 
 impl Library {
+    pub(crate) fn reading_storage(&self) -> ReadingStorage<'_> {
+        ReadingStorage(self)
+    }
+
+    pub(crate) fn archive_storage(&self) -> ArchiveStorage<'_> {
+        ArchiveStorage(self)
+    }
+
+    pub(crate) fn text_file_storage(&self) -> TextFileStorage {
+        TextFileStorage
+    }
+
     pub fn open(data_dir: impl AsRef<Path>) -> io::Result<Self> {
         fs::create_dir_all(data_dir.as_ref())?;
         fs::create_dir_all(data_dir.as_ref().join("books"))?;
@@ -302,13 +318,13 @@ fn application_error(error: LibraryError) -> ApplicationError {
     }
 }
 
-impl ReadingPort for Library {
+impl ReadingPort for ReadingStorage<'_> {
     fn store_pdf(&self, path: String, title: String, id: String) -> Result<Book, ApplicationError> {
-        self.store_pdf(path, title, id).map_err(application_error)
+        self.0.store_pdf(path, title, id).map_err(application_error)
     }
 
     fn remove_pdf(&self, stored_file: &str) -> Result<(), io::Error> {
-        remove_if_present(&self.absolute_book_path(stored_file))
+        remove_if_present(&self.0.absolute_book_path(stored_file))
     }
 }
 
@@ -318,33 +334,36 @@ impl SearchPort for Library {
     }
 }
 
-impl ArchivePort for Library {
+impl ArchivePort for ArchiveStorage<'_> {
     fn write_archive(
         &self,
         path: String,
         password: &str,
         state: &LibraryState,
     ) -> Result<(), ApplicationError> {
-        self.write_archive(path, password, state)
+        self.0
+            .write_archive(path, password, state)
             .map_err(application_error)
     }
 
     fn read_archive(&self, path: String, password: &str) -> Result<LibraryState, ApplicationError> {
-        self.read_archive(path, password).map_err(application_error)
+        self.0
+            .read_archive(path, password)
+            .map_err(application_error)
     }
 
     fn read_latest_snapshot(&self) -> Result<LibraryState, ApplicationError> {
-        self.read_latest_snapshot().map_err(application_error)
+        self.0.read_latest_snapshot().map_err(application_error)
     }
 
     fn rollback_import(&self, state: &LibraryState) {
         for book in &state.books {
-            let _ = remove_if_present(&self.absolute_book_path(&book.stored_file));
+            let _ = remove_if_present(&self.0.absolute_book_path(&book.stored_file));
         }
     }
 }
 
-impl ExportPort for Library {
+impl ExportPort for TextFileStorage {
     fn write_text(&self, path: String, contents: &str) -> Result<(), io::Error> {
         atomic_write(Path::new(&path), contents.as_bytes())
     }

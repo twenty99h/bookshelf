@@ -142,8 +142,9 @@ pub(crate) fn import_pdf(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
+    let storage = library.reading_storage();
     application::import_pdf(
-        &*library,
+        &storage,
         &*library,
         &application::SystemIdGenerator,
         path,
@@ -201,7 +202,8 @@ pub(crate) fn export_library_archive(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::export_archive(&*library, &*library, path, &password)
+    let archive = library.archive_storage();
+    application::export_archive(&archive, &*library, path, &password)
         .map_err(|error| CommandError::from_application(error, "экспортировать архив"))
 }
 
@@ -215,7 +217,8 @@ pub(crate) fn import_library_archive(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::import_archive(&*library, &*library, path, &password)
+    let archive = library.archive_storage();
+    application::import_archive(&archive, &*library, path, &password)
         .map_err(|error| CommandError::from_application(error, "импортировать архив"))
 }
 
@@ -227,7 +230,8 @@ pub(crate) fn restore_latest_snapshot(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::restore_latest_snapshot(&*library, &*library)
+    let archive = library.archive_storage();
+    application::restore_latest_snapshot(&archive, &*library)
         .map_err(|error| CommandError::from_application(error, "восстановить снимок"))
 }
 
@@ -241,7 +245,7 @@ pub(crate) fn export_material_markdown(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::export_material(&*library, &*library, &material_id, path)
+    application::export_material(&library.text_file_storage(), &*library, &material_id, path)
         .map_err(|error| CommandError::from_application(error, "экспортировать материал"))
 }
 
@@ -256,7 +260,7 @@ pub(crate) fn export_draft_markdown(
         .lock()
         .map_err(|_| CommandError::library_access())?;
     application::export_draft(
-        &*library,
+        &library.text_file_storage(),
         &*library,
         &application::SystemClock,
         &application::SystemIdGenerator,

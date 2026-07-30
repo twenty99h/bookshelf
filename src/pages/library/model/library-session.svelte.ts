@@ -38,18 +38,26 @@ export class LibrarySession {
   }
 
   async execute(action: LibraryAction, success = "Изменения сохранены"): Promise<boolean> {
+    return (await this.mutate(() => this.commands.execute(action), success)) !== null;
+  }
+
+  async mutate(
+    command: () => Promise<LibraryState | null>,
+    success = "Изменения сохранены",
+  ): Promise<LibraryState | null> {
     const order = this.#nextSnapshotOrder();
     this.#pendingMutations += 1;
     this.busy = true;
     this.error = "";
     this.feedback = "";
 
-    let succeeded = false;
+    let snapshot: LibraryState | null = null;
     const operation = this.#mutationQueue.then(async () => {
       try {
-        this.#replaceSnapshot(await this.commands.execute(action), order);
+        snapshot = await command();
+        if (!snapshot) return;
+        this.#replaceSnapshot(snapshot, order);
         this.feedback = success;
-        succeeded = true;
       } catch (cause) {
         this.error = commandErrorMessage(cause);
       } finally {
@@ -59,7 +67,7 @@ export class LibrarySession {
     });
     this.#mutationQueue = operation;
     await operation;
-    return succeeded;
+    return snapshot;
   }
 
   replaceFrom(snapshot: LibraryState, order = this.#nextSnapshotOrder()): void {

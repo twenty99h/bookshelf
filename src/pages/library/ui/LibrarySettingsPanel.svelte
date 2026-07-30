@@ -8,16 +8,14 @@
     library,
     commands,
     execute,
-    onLibrary,
-    onSnapshotRequest,
+    mutate,
     onFeedback,
     onError,
   }: {
     library: LibraryState;
     commands: LibraryCommands;
     execute: (action: LibraryAction, success: string) => Promise<boolean>;
-    onLibrary: (state: LibraryState, order: number) => void;
-    onSnapshotRequest: () => number;
+    mutate: (command: () => Promise<LibraryState | null>, success: string) => Promise<LibraryState | null>;
     onFeedback: (message: string) => void;
     onError: (message: string) => void;
   } = $props();
@@ -64,13 +62,13 @@
   async function importArchive() {
     busy = true;
     onError("");
-    const order = onSnapshotRequest();
     try {
-      const snapshot = await commands.importArchive(archivePassword);
+      const snapshot = await mutate(
+        () => commands.importArchive(archivePassword),
+        "Личная библиотека восстановлена; вход в Codex потребуется выполнить заново",
+      );
       if (!snapshot) return;
-      onLibrary(snapshot, order);
       note = snapshot.workspaceNote;
-      onFeedback("Личная библиотека восстановлена; вход в Codex потребуется выполнить заново");
     } catch (cause) {
       onError(commandErrorMessage(cause));
     } finally {
@@ -79,12 +77,10 @@
   }
 
   async function restoreSnapshot() {
-    const order = onSnapshotRequest();
     try {
-      const snapshot = await commands.restoreLatestSnapshot();
-      onLibrary(snapshot, order);
+      const snapshot = await mutate(() => commands.restoreLatestSnapshot(), "Последний снимок восстановлен");
+      if (!snapshot) return;
       note = snapshot.workspaceNote;
-      onFeedback("Последний снимок восстановлен");
     } catch (cause) {
       onError(commandErrorMessage(cause));
     }

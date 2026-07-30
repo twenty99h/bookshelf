@@ -81,6 +81,10 @@ pub(crate) fn search_library(
     port: &impl SearchPort,
     query: &str,
 ) -> Result<Vec<SearchResult>, ApplicationError> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
     port.search(query)
 }
 

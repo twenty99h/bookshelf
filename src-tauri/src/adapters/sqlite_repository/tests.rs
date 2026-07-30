@@ -195,7 +195,7 @@ fn draft_export_writes_a_temporary_markdown_resource_and_commits_removal() {
     let destination = data_dir.join("exported-draft.md");
 
     let exported = crate::application::export_draft(
-        &library,
+        &library.text_file_storage(),
         &library,
         &SystemClock,
         &SystemIdGenerator,
@@ -516,7 +516,7 @@ fn pdf_import_corpus_covers_text_variants_and_rejects_scanned_input() {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf");
     let text_layer = corpus.join("text-layer.pdf");
     let state = crate::application::import_pdf(
-        &library,
+        &library.reading_storage(),
         &library,
         &SystemIdGenerator,
         text_layer.to_string_lossy().into_owned(),
@@ -529,7 +529,7 @@ fn pdf_import_corpus_covers_text_variants_and_rejects_scanned_input() {
 
     let scanned = corpus.join("image-only.pdf");
     let error = crate::application::import_pdf(
-        &library,
+        &library.reading_storage(),
         &library,
         &SystemIdGenerator,
         scanned.to_string_lossy().into_owned(),
@@ -586,7 +586,8 @@ fn snapshots_do_not_make_full_ai_responses_permanent() {
         })
         .unwrap();
     library.create_snapshot(&state).unwrap();
-    let restored = crate::application::restore_latest_snapshot(&library, &library).unwrap();
+    let restored =
+        crate::application::restore_latest_snapshot(&library.archive_storage(), &library).unwrap();
     assert!(restored.reviews[0].response.is_empty());
     fs::remove_dir_all(data_dir).unwrap();
 }
@@ -602,7 +603,7 @@ fn encrypted_archive_round_trip_restores_state_and_rejects_a_wrong_password() {
         .unwrap();
     let archive = source_dir.with_extension("bookshelf.age");
     crate::application::export_archive(
-        &source,
+        &source.archive_storage(),
         &source,
         archive.to_string_lossy().into_owned(),
         "надёжный пароль",
@@ -612,7 +613,7 @@ fn encrypted_archive_round_trip_restores_state_and_rejects_a_wrong_password() {
     let target_dir = test_data_dir();
     let target = Library::open(&target_dir).unwrap();
     let wrong = crate::application::import_archive(
-        &target,
+        &target.archive_storage(),
         &target,
         archive.to_string_lossy().into_owned(),
         "другой пароль",
@@ -626,7 +627,7 @@ fn encrypted_archive_round_trip_restores_state_and_rejects_a_wrong_password() {
     let corrupt_archive = source_dir.join("corrupt.bookshelf.age");
     fs::write(&corrupt_archive, b"not an age archive").unwrap();
     let corrupt = crate::application::import_archive(
-        &target,
+        &target.archive_storage(),
         &target,
         corrupt_archive.to_string_lossy().into_owned(),
         "надёжный пароль",
@@ -640,7 +641,7 @@ fn encrypted_archive_round_trip_restores_state_and_rejects_a_wrong_password() {
     let blocked_destination = source_dir.join("blocked.bookshelf.age");
     fs::create_dir(&blocked_destination).unwrap();
     let interrupted = crate::application::export_archive(
-        &source,
+        &source.archive_storage(),
         &source,
         blocked_destination.to_string_lossy().into_owned(),
         "надёжный пароль",
@@ -651,7 +652,7 @@ fn encrypted_archive_round_trip_restores_state_and_rejects_a_wrong_password() {
     assert!(!blocked_destination.with_extension("age.tmp").exists());
 
     crate::application::import_archive(
-        &target,
+        &target.archive_storage(),
         &target,
         archive.to_string_lossy().into_owned(),
         "надёжный пароль",

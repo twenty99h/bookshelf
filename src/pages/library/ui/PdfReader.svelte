@@ -40,12 +40,14 @@
   let error = $state("");
   let rendering = false;
   let pending = false;
+  let disposed = false;
   let pdfjs: typeof import("pdfjs-dist");
 
   onMount(() => {
     void initialize();
     globalThis.document.addEventListener("selectionchange", selectText);
     return () => {
+      disposed = true;
       globalThis.document.removeEventListener("selectionchange", selectText);
       void destroyPdf(loadingTask, textLayerContainer);
     };
@@ -54,6 +56,7 @@
   async function initialize() {
     try {
       pdfjs = await import("pdfjs-dist");
+      if (disposed) return;
       pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
       page = initialPage;
       zoom = initialZoom;
@@ -63,14 +66,19 @@
         isImageDecoderSupported: false,
         isOffscreenCanvasSupported: false,
       });
-      pdfDocument = await loadingTask.promise;
+      const document = await loadingTask.promise;
+      if (disposed) {
+        await destroyPdf(loadingTask, textLayerContainer);
+        return;
+      }
+      pdfDocument = document;
       pageCount = pdfDocument.numPages;
       embeddedOutline = await readOutline(pdfDocument);
       if (savedOutline.length === 0 && embeddedOutline.length > 0) onOutline(embeddedOutline);
       await renderPage();
       scrollContainer.scrollTop = initialScroll;
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      if (!disposed) error = cause instanceof Error ? cause.message : String(cause);
     }
   }
 
