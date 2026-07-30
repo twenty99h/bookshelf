@@ -13,10 +13,11 @@
     WorkspaceShell,
   } from "@/shared/ui";
   import IdeaWorkbench from "./IdeaWorkbench.svelte";
+  import DraftQueue from "./DraftQueue.svelte";
   import LibrarySettingsPanel from "./LibrarySettingsPanel.svelte";
   import PdfReader from "./PdfReader.svelte";
   import StudyWorkspace from "./StudyWorkspace.svelte";
-  import { commandErrorMessage, type Book, type LibraryAction, type SearchResult } from "@/shared/api";
+  import { commandErrorMessage, type Book, type DraftNote, type LibraryAction, type SearchResult } from "@/shared/api";
   import { tauriLibraryCommands } from "../api/tauri-library-commands";
   import type { LibraryCommands, LibraryView } from "../model/library-commands";
   import { LibrarySession } from "../model/library-session.svelte";
@@ -39,9 +40,7 @@
   let context = $state("");
   let comment = $state("");
   let section = $state("Введение");
-  let formulation = $state("");
   let topicName = $state("");
-  let attachIdeaId = $state("");
   let outlineTitle = $state("");
   let outlinePage = $state(1);
   let positionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -169,12 +168,12 @@
     }
   }
 
-  async function resolveDraft(draftId: string) {
+  async function resolveDraft(draft: DraftNote, formulation: string) {
     await run(
-      { kind: "resolveDraftAsIdea", draftId, formulation, section, assignments: ["recall"] },
+      { kind: "resolveDraftAsIdea", draftId: draft.id, formulation, section: draft.section, assignments: ["recall"] },
       "Черновик стал самостоятельной идеей",
     );
-    if (!session.error) formulation = "";
+    return !session.error;
   }
 
   async function search() {
@@ -533,43 +532,16 @@
           </section>
         {/if}
       {:else if view === "queue"}
-        {#if library.drafts.length === 0}<section
-            class="grid justify-items-center rounded-[14px] border border-rule bg-paper-raised px-6 py-[42px] text-center shadow-paper [&>p]:max-w-[590px] [&>p]:leading-[1.65] [&>p]:text-ink-muted"
-          >
-            <h2>Очередь разобрана</h2>
-            <p>Новые фрагменты можно сохранить, не выходя из просмотрщика.</p>
-          </section>{:else}<section class="grid gap-3.5">
-            {#each library.drafts as draft (draft.id)}<article
-                class="rounded-[11px] border border-rule bg-paper-raised p-6 shadow-paper"
-              >
-                <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">
-                  {bookTitle(draft.bookId)} · {draft.section} · стр. {draft.page}
-                </p>
-                <blockquote>{draft.excerpt}</blockquote>
-                {#if draft.comment}<p>{draft.comment}</p>{/if}
-                <TextArea id={`idea-${draft.id}`} label="Самостоятельная формулировка" bind:value={formulation} />
-                <div class="mt-2.5 flex flex-wrap items-center gap-[9px]">
-                  <Button variant="primary" onclick={() => resolveDraft(draft.id)}>Создать идею</Button>
-                  <SelectField
-                    label="Идея для присоединения"
-                    bind:value={attachIdeaId}
-                    placeholder="Выберите идею"
-                    options={library.ideas.map((idea) => ({ value: idea.id, label: idea.formulation }))}
-                  />
-                  <Button
-                    disabled={!attachIdeaId}
-                    onclick={() =>
-                      run(
-                        { kind: "attachDraftToIdea", draftId: draft.id, ideaId: attachIdeaId },
-                        "Фрагмент присоединён к идее",
-                      )}>Присоединить</Button
-                  ><Button onclick={() => exportDraft(draft.id)}>Экспортировать</Button><Button
-                    onclick={() => run({ kind: "discardDraft", draftId: draft.id }, "Черновая заметка удалена")}
-                    >Удалить</Button
-                  >
-                </div>
-              </article>{/each}
-          </section>{/if}
+        <DraftQueue
+          drafts={library.drafts}
+          ideas={library.ideas}
+          {bookTitle}
+          onCreate={resolveDraft}
+          onAttach={(draftId, ideaId) =>
+            run({ kind: "attachDraftToIdea", draftId, ideaId }, "Фрагмент присоединён к идее")}
+          onExport={exportDraft}
+          onDiscard={(draftId) => run({ kind: "discardDraft", draftId }, "Черновая заметка удалена")}
+        />
       {:else if view === "ideas"}
         {#if openedIdea}
           <section

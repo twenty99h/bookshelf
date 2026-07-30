@@ -8,11 +8,20 @@ impl Library {
         id: String,
     ) -> Result<Book, LibraryError> {
         let bytes = fs::read(source.as_ref())?;
-        if !bytes.starts_with(b"%PDF") {
-            return Err(DomainError::new("pdf_invalid", "Выбранный файл не является PDF").into());
-        }
-        let has_text_layer = bytes.windows(3).any(|part| part == b" BT")
-            || bytes.windows(5).any(|part| part == b"/Font");
+        let document = lopdf::Document::load_mem(&bytes).map_err(|_| {
+            DomainError::new("pdf_invalid", "Выбранный файл не является корректным PDF")
+        })?;
+        let has_text_layer = document.get_pages().values().any(|page_id| {
+            document
+                .get_page_content_with_limit(*page_id, 8 * 1024 * 1024)
+                .ok()
+                .and_then(|content| lopdf::content::Content::decode(&content).ok())
+                .is_some_and(|content| {
+                    content.operations.iter().any(|operation| {
+                        matches!(operation.operator.as_str(), "Tj" | "TJ" | "'" | "\"")
+                    })
+                })
+        });
         if !has_text_layer {
             return Err(DomainError::new(
                 "pdf_text_layer_missing",

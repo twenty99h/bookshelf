@@ -8,7 +8,7 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Lines},
     process::{ChildStdout, Command},
     time::{self, Duration},
 };
@@ -23,7 +23,7 @@ pub struct CodexStreamEvent {
     pub text: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum CodexStreamEventKind {
@@ -257,163 +257,21 @@ impl CodexAdapter {
             ));
         }
         let (_child, mut stdin, mut lines) = self.connect().await?;
-        send(
+        review_transport(
+            request_id,
+            package,
+            &self.workspace_dir,
+            cancelled,
+            emit,
             &mut stdin,
-            &RpcRequest {
-                method: "thread/start",
-                id: Some(2),
-                params: ThreadStartParams {
-                    cwd: &self.workspace_dir,
-                    approval_policy: "never",
-                    sandbox: "readOnly",
-                    service_name: "bookshelf",
-                },
-            },
+            &mut lines,
         )
-        .await?;
-        let thread: ThreadStartResult = response(&mut lines, 2).await?;
-        let thread_id = thread.thread.id;
-        let prompt = format!(
-            "Ты внешний критик уже сформулированной читателем идеи. Не используй инструменты, файлы или сеть. Не переписывай идею за читателя и не выставляй итоговую оценку. Укажи возможные пробелы, ограничения и вопросы только по подтверждённому пакету ниже.\n\n{package}"
-        );
-        send(
-            &mut stdin,
-            &RpcRequest {
-                method: "turn/start",
-                id: Some(3),
-                params: TurnStartParams {
-                    thread_id: &thread_id,
-                    input: [TextInput {
-                        r#type: "text",
-                        text: &prompt,
-                    }],
-                    approval_policy: "never",
-                    sandbox_policy: SandboxPolicy {
-                        r#type: "readOnly",
-                        access: SandboxAccess {
-                            r#type: "restricted",
-                            include_platform_defaults: true,
-                            readable_roots: [],
-                        },
-                    },
-                },
-            },
-        )
-        .await?;
-        let turn: TurnStartResult = response(&mut lines, 3).await?;
-        let turn_id = turn.turn.id;
-        let mut answer = String::new();
-        let mut interrupt_sent = false;
-        loop {
-            if cancelled.load(Ordering::Relaxed) && !interrupt_sent {
-                send(
-                    &mut stdin,
-                    &RpcRequest {
-                        method: "turn/interrupt",
-                        id: Some(4),
-                        params: InterruptParams {
-                            thread_id: &thread_id,
-                            turn_id: &turn_id,
-                        },
-                    },
-                )
-                .await?;
-                interrupt_sent = true;
-            }
-            let line = match time::timeout(Duration::from_millis(150), lines.next_line()).await {
-                Err(_) => continue,
-                Ok(Ok(Some(line))) => line,
-                Ok(Ok(None)) => {
-                    return Err(CodexError::new(
-                        "codex_crashed",
-                        "Codex завершился до окончания проверки",
-                    ))
-                }
-                Ok(Err(error)) => {
-                    return Err(CodexError::new(
-                        "codex_protocol_failed",
-                        format!("Не удалось прочитать ответ Codex: {error}"),
-                    ))
-                }
-            };
-            let event: ServerEvent = serde_json::from_str(&line).map_err(|_| {
-                CodexError::new(
-                    "codex_protocol_incompatible",
-                    "Codex вернул неизвестный формат события",
-                )
-            })?;
-            match stream_message(event) {
-                StreamMessage::Delta(delta) => {
-                    answer.push_str(&delta);
-                    emit(CodexStreamEvent {
-                        request_id: request_id.into(),
-                        kind: CodexStreamEventKind::Delta,
-                        text: delta,
-                    });
-                }
-                StreamMessage::Completed => {
-                    if answer.trim().is_empty() {
-                        return Err(CodexError::new(
-                            "codex_response_empty",
-                            "Codex завершил проверку без текста",
-                        ));
-                    }
-                    return Ok(answer);
-                }
-                StreamMessage::Interrupted => {
-                    return Err(CodexError::new("codex_cancelled", "Проверка отменена"))
-                }
-                StreamMessage::Failed(message) => {
-                    return Err(CodexError::new("codex_review_failed", message))
-                }
-                StreamMessage::Ignore => {}
-            }
-        }
+        .await
     }
 
     pub async fn login(&self, emit: impl Fn(CodexStreamEvent)) -> Result<(), CodexError> {
         let (_child, mut stdin, mut lines) = self.connect().await?;
-        send(
-            &mut stdin,
-            &RpcRequest {
-                method: "account/login/start",
-                id: Some(2),
-                params: LoginStartParams {
-                    r#type: "chatgptDeviceCode",
-                },
-            },
-        )
-        .await?;
-        let login: LoginStartResult = response(&mut lines, 2).await?;
-        emit(CodexStreamEvent {
-            request_id: "login".into(),
-            kind: CodexStreamEventKind::DeviceCode,
-            text: format!("{}\n{}", login.verification_url, login.user_code),
-        });
-        loop {
-            let line = lines
-                .next_line()
-                .await
-                .map_err(|error| CodexError::new("codex_protocol_failed", error.to_string()))?
-                .ok_or_else(|| {
-                    CodexError::new("codex_crashed", "Codex завершился во время входа")
-                })?;
-            let event: ServerEvent = serde_json::from_str(&line).map_err(|_| {
-                CodexError::new(
-                    "codex_protocol_incompatible",
-                    "Codex вернул неизвестный формат события входа",
-                )
-            })?;
-            if let ServerEvent::LoginCompleted { success, error } = event {
-                if success {
-                    return Ok(());
-                }
-                return Err(CodexError::new(
-                    "codex_login_failed",
-                    error.unwrap_or_else(|| "Вход в Codex не завершён".into()),
-                ));
-            }
-        }
+        login_transport(emit, &mut stdin, &mut lines).await
     }
 
     async fn connect(
@@ -450,37 +308,214 @@ impl CodexAdapter {
             CodexError::new("codex_protocol_failed", "Codex не открыл поток ответа")
         })?;
         let mut lines = BufReader::new(stdout).lines();
-        send(
-            &mut stdin,
-            &RpcRequest {
-                method: "initialize",
-                id: Some(1),
-                params: InitializeParams {
-                    client_info: ClientInfo {
-                        name: "bookshelf",
-                        title: "Bookshelf",
-                        version: env!("CARGO_PKG_VERSION"),
-                    },
-                },
-            },
-        )
-        .await?;
-        let _: serde_json::Value = response(&mut lines, 1).await?;
-        send(
-            &mut stdin,
-            &RpcRequest {
-                method: "initialized",
-                id: None,
-                params: (),
-            },
-        )
-        .await?;
+        initialize_transport(&mut stdin, &mut lines).await?;
         Ok((child, stdin, lines))
     }
 }
 
-async fn send(
-    stdin: &mut tokio::process::ChildStdin,
+async fn review_transport<W: AsyncWrite + Unpin, R: AsyncBufRead + Unpin>(
+    request_id: &str,
+    package: &str,
+    workspace_dir: &Path,
+    cancelled: Arc<AtomicBool>,
+    emit: impl Fn(CodexStreamEvent),
+    stdin: &mut W,
+    lines: &mut Lines<R>,
+) -> Result<String, CodexError> {
+    send(
+        stdin,
+        &RpcRequest {
+            method: "thread/start",
+            id: Some(2),
+            params: ThreadStartParams {
+                cwd: workspace_dir,
+                approval_policy: "never",
+                sandbox: "readOnly",
+                service_name: "bookshelf",
+            },
+        },
+    )
+    .await?;
+    let thread: ThreadStartResult = response(lines, 2).await?;
+    let thread_id = thread.thread.id;
+    let prompt = format!(
+            "Ты внешний критик уже сформулированной читателем идеи. Не используй инструменты, файлы или сеть. Не переписывай идею за читателя и не выставляй итоговую оценку. Укажи возможные пробелы, ограничения и вопросы только по подтверждённому пакету ниже.\n\n{package}"
+        );
+    send(
+        stdin,
+        &RpcRequest {
+            method: "turn/start",
+            id: Some(3),
+            params: TurnStartParams {
+                thread_id: &thread_id,
+                input: [TextInput {
+                    r#type: "text",
+                    text: &prompt,
+                }],
+                approval_policy: "never",
+                sandbox_policy: SandboxPolicy {
+                    r#type: "readOnly",
+                    access: SandboxAccess {
+                        r#type: "restricted",
+                        include_platform_defaults: true,
+                        readable_roots: [],
+                    },
+                },
+            },
+        },
+    )
+    .await?;
+    let turn: TurnStartResult = response(lines, 3).await?;
+    let turn_id = turn.turn.id;
+    let mut answer = String::new();
+    let mut interrupt_sent = false;
+    loop {
+        if cancelled.load(Ordering::Relaxed) && !interrupt_sent {
+            send(
+                stdin,
+                &RpcRequest {
+                    method: "turn/interrupt",
+                    id: Some(4),
+                    params: InterruptParams {
+                        thread_id: &thread_id,
+                        turn_id: &turn_id,
+                    },
+                },
+            )
+            .await?;
+            interrupt_sent = true;
+        }
+        let line = match time::timeout(Duration::from_millis(150), lines.next_line()).await {
+            Err(_) => continue,
+            Ok(Ok(Some(line))) => line,
+            Ok(Ok(None)) => {
+                return Err(CodexError::new(
+                    "codex_crashed",
+                    "Codex завершился до окончания проверки",
+                ))
+            }
+            Ok(Err(error)) => {
+                return Err(CodexError::new(
+                    "codex_protocol_failed",
+                    format!("Не удалось прочитать ответ Codex: {error}"),
+                ))
+            }
+        };
+        let event: ServerEvent = serde_json::from_str(&line).map_err(|_| {
+            CodexError::new(
+                "codex_protocol_incompatible",
+                "Codex вернул неизвестный формат события",
+            )
+        })?;
+        match stream_message(event) {
+            StreamMessage::Delta(delta) => {
+                answer.push_str(&delta);
+                emit(CodexStreamEvent {
+                    request_id: request_id.into(),
+                    kind: CodexStreamEventKind::Delta,
+                    text: delta,
+                });
+            }
+            StreamMessage::Completed => {
+                if answer.trim().is_empty() {
+                    return Err(CodexError::new(
+                        "codex_response_empty",
+                        "Codex завершил проверку без текста",
+                    ));
+                }
+                return Ok(answer);
+            }
+            StreamMessage::Interrupted => {
+                return Err(CodexError::new("codex_cancelled", "Проверка отменена"))
+            }
+            StreamMessage::Failed(message) => {
+                return Err(CodexError::new("codex_review_failed", message))
+            }
+            StreamMessage::Ignore => {}
+        }
+    }
+}
+
+async fn login_transport<W: AsyncWrite + Unpin, R: AsyncBufRead + Unpin>(
+    emit: impl Fn(CodexStreamEvent),
+    stdin: &mut W,
+    lines: &mut Lines<R>,
+) -> Result<(), CodexError> {
+    send(
+        stdin,
+        &RpcRequest {
+            method: "account/login/start",
+            id: Some(2),
+            params: LoginStartParams {
+                r#type: "chatgptDeviceCode",
+            },
+        },
+    )
+    .await?;
+    let login: LoginStartResult = response(lines, 2).await?;
+    emit(CodexStreamEvent {
+        request_id: "login".into(),
+        kind: CodexStreamEventKind::DeviceCode,
+        text: format!("{}\n{}", login.verification_url, login.user_code),
+    });
+    loop {
+        let line = lines
+            .next_line()
+            .await
+            .map_err(|error| CodexError::new("codex_protocol_failed", error.to_string()))?
+            .ok_or_else(|| CodexError::new("codex_crashed", "Codex завершился во время входа"))?;
+        let event: ServerEvent = serde_json::from_str(&line).map_err(|_| {
+            CodexError::new(
+                "codex_protocol_incompatible",
+                "Codex вернул неизвестный формат события входа",
+            )
+        })?;
+        if let ServerEvent::LoginCompleted { success, error } = event {
+            if success {
+                return Ok(());
+            }
+            return Err(CodexError::new(
+                "codex_login_failed",
+                error.unwrap_or_else(|| "Вход в Codex не завершён".into()),
+            ));
+        }
+    }
+}
+
+async fn initialize_transport<W: AsyncWrite + Unpin, R: AsyncBufRead + Unpin>(
+    stdin: &mut W,
+    lines: &mut Lines<R>,
+) -> Result<(), CodexError> {
+    send(
+        stdin,
+        &RpcRequest {
+            method: "initialize",
+            id: Some(1),
+            params: InitializeParams {
+                client_info: ClientInfo {
+                    name: "bookshelf",
+                    title: "Bookshelf",
+                    version: env!("CARGO_PKG_VERSION"),
+                },
+            },
+        },
+    )
+    .await?;
+    let _: serde_json::Value = response(lines, 1).await?;
+    send(
+        stdin,
+        &RpcRequest {
+            method: "initialized",
+            id: None,
+            params: (),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn send<W: AsyncWrite + Unpin>(
+    stdin: &mut W,
     value: &impl Serialize,
 ) -> Result<(), CodexError> {
     let mut encoded = serde_json::to_vec(&value)
@@ -642,12 +677,124 @@ mod tests {
     }
 
     #[test]
-    fn fake_transport_covers_login_refusal_schema_mismatch_and_crash() {
+    fn controlled_fake_transport_covers_review_login_cancellation_and_failures() {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async {
+                let (client, server) = tokio::io::duplex(8 * 1024);
+                let (client_read, mut client_write) = tokio::io::split(client);
+                let mut client_lines = BufReader::new(client_read).lines();
+                let server = tokio::spawn(async move {
+                    let (server_read, mut server_write) = tokio::io::split(server);
+                    let mut requests = BufReader::new(server_read).lines();
+                    let thread: serde_json::Value =
+                        serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+                    assert_eq!(thread["method"], "thread/start");
+                    server_write
+                        .write_all(b"{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-1\"}},\"error\":null}\n")
+                        .await
+                        .unwrap();
+                    let turn: serde_json::Value =
+                        serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+                    assert_eq!(turn["method"], "turn/start");
+                    assert!(turn["params"]["input"][0]["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("Подтверждённый пакет"));
+                    server_write
+                        .write_all(concat!(
+                            "{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-1\"}},\"error\":null}\n",
+                            "{\"method\":\"item/agentMessage/delta\",\"params\":{\"delta\":\"Ограничение\"}}\n",
+                            "{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\",\"error\":null}}}\n"
+                        ).as_bytes())
+                        .await
+                        .unwrap();
+                });
+                let events = std::sync::Mutex::new(Vec::new());
+                let answer = review_transport(
+                    "request-12345678",
+                    "Подтверждённый пакет",
+                    Path::new("/empty"),
+                    Arc::new(AtomicBool::new(false)),
+                    |event| events.lock().unwrap().push(event),
+                    &mut client_write,
+                    &mut client_lines,
+                )
+                .await
+                .unwrap();
+                server.await.unwrap();
+                assert_eq!(answer, "Ограничение");
+                assert_eq!(events.lock().unwrap().len(), 1);
+
+                let (client, server) = tokio::io::duplex(8 * 1024);
+                let (client_read, mut client_write) = tokio::io::split(client);
+                let mut client_lines = BufReader::new(client_read).lines();
+                let server = tokio::spawn(async move {
+                    let (server_read, mut server_write) = tokio::io::split(server);
+                    let mut requests = BufReader::new(server_read).lines();
+                    requests.next_line().await.unwrap().unwrap();
+                    server_write
+                        .write_all(b"{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-1\"}},\"error\":null}\n")
+                        .await
+                        .unwrap();
+                    requests.next_line().await.unwrap().unwrap();
+                    server_write
+                        .write_all(b"{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-1\"}},\"error\":null}\n")
+                        .await
+                        .unwrap();
+                    let interrupt: serde_json::Value =
+                        serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+                    assert_eq!(interrupt["method"], "turn/interrupt");
+                    server_write
+                        .write_all(b"{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"interrupted\",\"error\":null}}}\n")
+                        .await
+                        .unwrap();
+                });
+                let cancelled = review_transport(
+                    "request-12345678",
+                    "Пакет",
+                    Path::new("/empty"),
+                    Arc::new(AtomicBool::new(true)),
+                    |_| {},
+                    &mut client_write,
+                    &mut client_lines,
+                )
+                .await
+                .unwrap_err();
+                server.await.unwrap();
+                assert_eq!(cancelled.kind(), CodexErrorKind::Cancelled);
+
+                let (client, server) = tokio::io::duplex(4 * 1024);
+                let (client_read, mut client_write) = tokio::io::split(client);
+                let mut client_lines = BufReader::new(client_read).lines();
+                let server = tokio::spawn(async move {
+                    let (server_read, mut server_write) = tokio::io::split(server);
+                    let mut requests = BufReader::new(server_read).lines();
+                    let login: serde_json::Value =
+                        serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
+                    assert_eq!(login["method"], "account/login/start");
+                    server_write
+                        .write_all(concat!(
+                            "{\"id\":2,\"result\":{\"verificationUrl\":\"https://example.test\",\"userCode\":\"ABCD\"},\"error\":null}\n",
+                            "{\"method\":\"account/login/completed\",\"params\":{\"success\":false,\"error\":\"login refused\"}}\n"
+                        ).as_bytes())
+                        .await
+                        .unwrap();
+                });
+                let login_events = std::sync::Mutex::new(Vec::new());
+                let refused = login_transport(
+                    |event| login_events.lock().unwrap().push(event),
+                    &mut client_write,
+                    &mut client_lines,
+                )
+                .await
+                .unwrap_err();
+                server.await.unwrap();
+                assert_eq!(refused.kind(), CodexErrorKind::Rejected);
+                assert_eq!(login_events.lock().unwrap()[0].kind, CodexStreamEventKind::DeviceCode);
+
                 let mut refused = BufReader::new(
                     b"{\"id\":1,\"result\":null,\"error\":{\"message\":\"login required\"}}\n"
                         .as_slice(),
@@ -671,6 +818,22 @@ mod tests {
                     .await
                     .unwrap_err();
                 assert_eq!(error.kind(), CodexErrorKind::Process);
+
+                let temporary = tempfile::tempdir().unwrap();
+                let missing = CodexAdapter {
+                    executable: temporary.path().join("missing-codex"),
+                    state_dir: temporary.path().join("state"),
+                    workspace_dir: temporary.path().to_owned(),
+                }
+                .review(
+                    "request-12345678",
+                    "Пакет",
+                    Arc::new(AtomicBool::new(false)),
+                    |_| {},
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(missing.kind(), CodexErrorKind::Unavailable);
             });
     }
 }

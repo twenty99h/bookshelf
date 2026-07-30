@@ -273,7 +273,7 @@ test("draft lifecycle uses only the injected domain command seam", async () => {
       kind: "resolveDraftAsIdea",
       draftId: "draft-1",
       formulation: "Система должна ожидать отказ",
-      section: "Введение",
+      section: "Глава 1",
       assignments: ["recall"],
     }),
   );
@@ -294,6 +294,33 @@ test("draft lifecycle uses only the injected domain command seam", async () => {
   expect(commands.exportDraft).toHaveBeenCalledWith("draft-1");
   await fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
   await waitFor(() => expect(commands.execute).toHaveBeenCalledWith({ kind: "discardDraft", draftId: "draft-1" }));
+});
+
+test("each draft card owns its unfinished formulation", async () => {
+  const state = libraryState({
+    books: [book("book-1", "Надёжные системы")],
+    drafts: [draft("draft-1", "book-1"), draft("draft-2", "book-1")],
+  });
+  const commands = fakeCommands({ load: vi.fn(async () => state), execute: vi.fn(async () => state) });
+  render(LibraryPage, { props: { commands } });
+
+  await fireEvent.click(await screen.findByRole("button", { name: /^Очередь разбора/ }));
+  const formulations = screen.getAllByRole("textbox", { name: "Самостоятельная формулировка" });
+  await fireEvent.input(formulations[0]!, { target: { value: "Первая идея" } });
+  await fireEvent.input(formulations[1]!, { target: { value: "Вторая идея" } });
+  const createButtons = screen.getAllByRole("button", { name: "Создать идею" });
+  await fireEvent.click(createButtons[0]!);
+  await waitFor(() =>
+    expect(commands.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ draftId: "draft-1", formulation: "Первая идея" }),
+    ),
+  );
+  await fireEvent.click(createButtons[1]!);
+  await waitFor(() =>
+    expect(commands.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ draftId: "draft-2", formulation: "Вторая идея" }),
+    ),
+  );
 });
 
 test("reader opens a PDF and saves its source and restored position", async () => {

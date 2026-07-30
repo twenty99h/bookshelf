@@ -527,6 +527,25 @@ fn pdf_import_corpus_covers_text_variants_and_rejects_scanned_input() {
     assert!(imported.has_text_layer);
     assert!(library.absolute_book_path(&imported.stored_file).is_file());
 
+    let complex = corpus.join("compressed-outline-fonts.pdf");
+    let complex_bytes = fs::read(&complex).unwrap();
+    let complex_document = lopdf::Document::load_mem(&complex_bytes).unwrap();
+    assert_eq!(complex_document.get_pages().len(), 2);
+    for marker in [b"/FlateDecode".as_slice(), b"/Outlines", b"/Encoding"] {
+        assert!(complex_bytes
+            .windows(marker.len())
+            .any(|window| window == marker));
+    }
+    let state = crate::application::import_pdf(
+        &library.reading_storage(),
+        &library,
+        &SystemIdGenerator,
+        complex.to_string_lossy().into_owned(),
+        "Спецификация с оглавлением".into(),
+    )
+    .unwrap();
+    assert!(state.books.last().unwrap().has_text_layer);
+
     let scanned = corpus.join("image-only.pdf");
     let error = crate::application::import_pdf(
         &library.reading_storage(),
