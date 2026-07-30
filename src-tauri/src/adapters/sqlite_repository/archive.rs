@@ -1,10 +1,11 @@
 use super::*;
 
 impl Library {
-    pub fn export_archive(
+    pub(super) fn write_archive(
         &self,
         destination: impl AsRef<Path>,
         password: &str,
+        state: &LibraryState,
     ) -> Result<(), LibraryError> {
         if password.chars().count() < 8 {
             return Err(DomainError::new(
@@ -23,7 +24,7 @@ impl Library {
             let mut archive = tar::Builder::new(encrypted);
             let manifest = ArchiveManifest {
                 version: 1,
-                state: without_transient_ai(self.load()?),
+                state: state.clone(),
             };
             append_bytes(
                 &mut archive,
@@ -47,7 +48,7 @@ impl Library {
         result
     }
 
-    pub fn import_archive(
+    pub(super) fn read_archive(
         &self,
         source: impl AsRef<Path>,
         password: &str,
@@ -81,14 +82,6 @@ impl Library {
             return Err(DomainError::new(
                 "archive_version_unsupported",
                 "Версия архива не поддерживается",
-            )
-            .into());
-        }
-        let current = self.load()?;
-        if current != LibraryState::default() {
-            return Err(DomainError::new(
-                "archive_target_not_empty",
-                "Импорт возможен только в пустую библиотеку: сохраните текущую библиотеку отдельно или используйте чистую установку",
             )
             .into());
         }
@@ -130,15 +123,10 @@ impl Library {
             }
             committed.push(target.clone());
         }
-        if let Err(error) = self.replace_state(&manifest.state) {
-            cleanup_paths(committed.iter());
-            return Err(error.into());
-        }
-        self.create_snapshot(&manifest.state)?;
         Ok(manifest.state)
     }
 
-    pub fn restore_latest_snapshot(&self) -> Result<LibraryState, LibraryError> {
+    pub(super) fn read_latest_snapshot(&self) -> Result<LibraryState, LibraryError> {
         let dir = self.data_dir.join("snapshots");
         let mut snapshots: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
         snapshots.sort_by_key(|entry| entry.file_name());
@@ -167,7 +155,6 @@ impl Library {
             )
             .into());
         }
-        self.replace_state(&state)?;
         Ok(state)
     }
 }

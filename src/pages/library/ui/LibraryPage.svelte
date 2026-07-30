@@ -14,6 +14,7 @@
     WorkspaceShell,
   } from "@/shared/ui";
   import IdeaWorkbench from "./IdeaWorkbench.svelte";
+  import LibrarySettingsPanel from "./LibrarySettingsPanel.svelte";
   import PdfReader from "./PdfReader.svelte";
   import {
     commandErrorMessage,
@@ -34,8 +35,6 @@
   let busy = $derived(session.busy);
   let error = $derived(session.error);
   let feedback = $derived(session.feedback);
-  let note = $state("");
-  let saved = $state(false);
   let settingsOpen = $state(false);
   let searchQuery = $state("");
   let results = $state<SearchResult[]>([]);
@@ -49,7 +48,6 @@
   let formulation = $state("");
   let sessionIntention = $state("");
   let topicName = $state("");
-  let archivePassword = $state("");
   let rescheduledSessionStatus = $state<SessionStatus>("moved");
   let rescheduledSessionReason = $state("");
   let attachIdeaId = $state("");
@@ -60,9 +58,6 @@
   let outlineTitle = $state("");
   let outlinePage = $state(1);
   let positionTimer: ReturnType<typeof setTimeout> | undefined;
-  let codexLoginUrl = $state("");
-  let codexLoginCode = $state("");
-  let codexLoginRunning = $state(false);
 
   let debt = $derived((library?.drafts.length ?? 0) + (library?.reviews.filter((item) => item.pending).length ?? 0));
   let activeBook = $derived(library?.books.find((book) => book.id === library?.activeStudyBookId));
@@ -90,35 +85,8 @@
   );
 
   onMount(() => {
-    let stop: (() => void) | undefined;
-    void commands
-      .onCodexLogin((event) => {
-        if (event.kind !== "deviceCode") return;
-        const [loginUrl = "", loginCode = ""] = event.text.split("\n", 2);
-        codexLoginUrl = loginUrl;
-        codexLoginCode = loginCode;
-      })
-      .then((unlisten) => (stop = unlisten));
-    void session.load().then(() => {
-      note = session.library?.workspaceNote ?? "";
-    });
-    return () => stop?.();
+    void session.load();
   });
-
-  async function loginCodex() {
-    codexLoginRunning = true;
-    session.error = "";
-    codexLoginUrl = "";
-    codexLoginCode = "";
-    try {
-      await commands.startCodexLogin();
-      session.feedback = "Вход в Codex завершён";
-    } catch (cause) {
-      session.error = commandErrorMessage(cause);
-    } finally {
-      codexLoginRunning = false;
-    }
-  }
 
   async function run(action: LibraryAction, success = "Изменения сохранены") {
     await session.execute(action, success);
@@ -146,7 +114,7 @@
     session.error = "";
     try {
       bookUrl = await commands.bookUrl(book.id);
-      readingBook = book;
+      readingBook = structuredClone(book);
     } catch (cause) {
       session.error = commandErrorMessage(cause);
     } finally {
@@ -234,12 +202,6 @@
     if (!session.error) formulation = "";
   }
 
-  async function saveNote(event: SubmitEvent) {
-    event.preventDefault();
-    saved = false;
-    saved = await session.execute({ kind: "saveWorkspaceNote", note }, "Сохранено локально");
-  }
-
   async function search() {
     openedSearchResult = null;
     try {
@@ -281,39 +243,12 @@
     )[status];
   }
 
-  async function exportArchive() {
-    session.busy = true;
-    session.error = "";
-    try {
-      if (await commands.exportArchive(archivePassword)) session.feedback = "Зашифрованный архив сохранён";
-    } catch (cause) {
-      session.error = commandErrorMessage(cause);
-    } finally {
-      session.busy = false;
-    }
-  }
-
-  async function importArchive() {
-    session.busy = true;
-    session.error = "";
-    const order = session.beginSnapshotRequest();
-    try {
-      const snapshot = await commands.importArchive(archivePassword);
-      if (!snapshot) return;
-      session.replaceFrom(snapshot, order);
-      session.feedback = "Личная библиотека восстановлена; вход в Codex потребуется выполнить заново";
-    } catch (cause) {
-      session.error = commandErrorMessage(cause);
-    } finally {
-      session.busy = false;
-    }
-  }
-
   async function exportDraft(draftId: string) {
+    const order = session.beginSnapshotRequest();
     try {
       const snapshot = await commands.exportDraft(draftId);
       if (!snapshot) return;
-      session.replaceFrom(snapshot);
+      session.replaceFrom(snapshot, order);
       session.feedback = "Черновая заметка экспортирована и убрана из очереди";
     } catch (cause) {
       session.error = commandErrorMessage(cause);
@@ -429,121 +364,15 @@
       {#if feedback}<div class="-mt-2 mb-[18px] min-h-6 text-[13px] text-success" role="status">{feedback}</div>{/if}
 
       {#if settingsOpen}
-        <section
-          class="mb-6 grid grid-cols-[.8fr_1.2fr] gap-[34px] rounded-xl border border-rule bg-paper-raised p-6 shadow-paper max-[640px]:grid-cols-1 [&_p]:leading-[1.55] [&_p]:text-ink-muted"
-          aria-label="Настройки"
-        >
-          <div>
-            <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">Настройки</p>
-            <h2>Личное напоминание</h2>
-            <p>Короткая запись для себя — например, с чего начать в следующий раз.</p>
-          </div>
-          <form onsubmit={saveNote}>
-            <TextField
-              id="workspace-note"
-              label="Личное напоминание"
-              bind:value={note}
-              placeholder="Например, вернуться к главе 2"
-              maxlength={240}
-              disabled={busy}
-            />
-            <div class="mt-2.5 flex flex-wrap items-center gap-[9px]">
-              <Button type="submit" disabled={busy}>Сохранить</Button>{#if saved}<StatusMessage tone="success"
-                  >Сохранено локально</StatusMessage
-                >{/if}
-            </div>
-          </form>
-          <div>
-            <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">
-              Перенос и восстановление
-            </p>
-            <h2>Зашифрованный архив</h2>
-            <p>
-              Архив содержит рабочее состояние и PDF. Забытый пароль восстановить невозможно. Данные входа Codex не
-              переносятся.
-            </p>
-          </div>
-          <div>
-            <TextField
-              id="archive-password"
-              label="Пароль архива"
-              bind:value={archivePassword}
-              placeholder="Не менее 8 символов"
-              disabled={busy}
-              type="password"
-            />
-            <div class="mt-2.5 flex flex-wrap items-center gap-[9px]">
-              <Button onclick={exportArchive} disabled={busy || archivePassword.length < 8}>Экспортировать</Button
-              ><Button onclick={importArchive} disabled={busy || archivePassword.length < 8}>Импортировать</Button
-              ><Button
-                onclick={async () => {
-                  try {
-                    session.replaceFrom(await commands.restoreLatestSnapshot());
-                    session.feedback = "Последний снимок восстановлен";
-                  } catch (cause) {
-                    session.error = commandErrorMessage(cause);
-                  }
-                }}>Восстановить снимок</Button
-              >
-            </div>
-          </div>
-          <div>
-            <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">Обновления</p>
-            <h2>Совместимая версия Bookshelf</h2>
-            <p>
-              Устанавливаются только обновления с проверяемой подписью. При ошибке текущая версия и личная библиотека
-              остаются без изменений.
-            </p>
-          </div>
-          <div class="mt-2.5 flex flex-wrap items-center gap-[9px]">
-            <Button
-              onclick={async () => {
-                try {
-                  const installed = await commands.installSignedUpdate();
-                  session.feedback = installed ? "Подписанное обновление установлено" : "У вас актуальная версия";
-                } catch (cause) {
-                  session.error = commandErrorMessage(cause);
-                }
-              }}>Проверить обновления</Button
-            >
-          </div>
-          <div>
-            <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">
-              Ненавязчивое напоминание
-            </p>
-            <h2>Долг изучения</h2>
-            <p>
-              Одно системное уведомление появится только вне чтения, если объём долга не менялся выбранное число дней.
-            </p>
-          </div>
-          <div class="mt-2.5 flex flex-wrap items-center gap-[9px]">
-            <NumberField
-              id="debt-days"
-              label="Период без изменений"
-              ariaLabel="Дней без изменения долга"
-              min={1}
-              max={90}
-              value={library.debtReminderDays || 7}
-              onChange={(days) => run({ kind: "setDebtReminder", days }, "Период напоминания сохранён")}
-            />
-          </div>
-          <div>
-            <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">
-              Необязательная проверка
-            </p>
-            <h2>Вход в Codex</h2>
-            <p>Codex хранит вход в отдельном каталоге. Bookshelf не читает OAuth-токены и не переносит их в архив.</p>
-          </div>
-          <div>
-            <div class="mt-2.5 flex flex-wrap items-center gap-[9px]">
-              <Button disabled={codexLoginRunning} onclick={loginCodex}
-                >{codexLoginRunning ? "Ожидаем вход…" : "Войти через ChatGPT"}</Button
-              >{#if codexLoginUrl}<Button onclick={() => commands.openExternalUrl(codexLoginUrl)}
-                  >Открыть страницу входа</Button
-                ><strong aria-live="polite">Код: {codexLoginCode}</strong>{/if}
-            </div>
-          </div>
-        </section>
+        <LibrarySettingsPanel
+          {library}
+          {commands}
+          execute={(action, success) => session.execute(action, success)}
+          onLibrary={(next, order) => session.replaceFrom(next, order)}
+          onSnapshotRequest={() => session.beginSnapshotRequest()}
+          onFeedback={(message) => (session.feedback = message)}
+          onError={(message) => (session.error = message)}
+        />
       {/if}
 
       {#if view === "library"}
@@ -893,9 +722,10 @@
             {commands}
             {run}
             {bookTitle}
-            onLibrary={(next) => {
-              session.replaceFrom(next);
+            onLibrary={(next, order) => {
+              session.replaceFrom(next, order);
             }}
+            onSnapshotRequest={() => session.beginSnapshotRequest()}
           />{#if library.materials.length}<section class="mt-5 grid gap-3.5" aria-label="Материалы для передачи">
               {#each library.materials as material (material.id)}<article
                   class="rounded-[11px] border border-rule bg-paper-raised p-6 shadow-paper"

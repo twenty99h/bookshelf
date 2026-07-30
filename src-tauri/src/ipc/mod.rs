@@ -1,4 +1,6 @@
-use crate::adapters::codex::{CodexAdapter, CodexError, CodexErrorKind, CodexStreamEvent};
+use crate::adapters::codex::{
+    CodexAdapter, CodexError, CodexErrorKind, CodexStreamEvent, CodexStreamEventKind,
+};
 use crate::adapters::sqlite_repository::{Library, LibraryError};
 use crate::application::{self, ApplicationError, SearchResult};
 use crate::domain::{DomainErrorKind, LibraryAction, LibraryState, ReviewKind};
@@ -140,8 +142,14 @@ pub(crate) fn import_pdf(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::import_pdf(&*library, path, title)
-        .map_err(|error| CommandError::from_application(error, "импортировать PDF"))
+    application::import_pdf(
+        &*library,
+        &*library,
+        &application::SystemIdGenerator,
+        path,
+        title,
+    )
+    .map_err(|error| CommandError::from_application(error, "импортировать PDF"))
 }
 
 #[tauri::command]
@@ -193,7 +201,7 @@ pub(crate) fn export_library_archive(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::export_archive(&*library, path, &password)
+    application::export_archive(&*library, &*library, path, &password)
         .map_err(|error| CommandError::from_application(error, "экспортировать архив"))
 }
 
@@ -207,7 +215,7 @@ pub(crate) fn import_library_archive(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::import_archive(&*library, path, &password)
+    application::import_archive(&*library, &*library, path, &password)
         .map_err(|error| CommandError::from_application(error, "импортировать архив"))
 }
 
@@ -219,7 +227,7 @@ pub(crate) fn restore_latest_snapshot(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::restore_latest_snapshot(&*library)
+    application::restore_latest_snapshot(&*library, &*library)
         .map_err(|error| CommandError::from_application(error, "восстановить снимок"))
 }
 
@@ -233,7 +241,7 @@ pub(crate) fn export_material_markdown(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::export_material(&*library, &material_id, path)
+    application::export_material(&*library, &*library, &material_id, path)
         .map_err(|error| CommandError::from_application(error, "экспортировать материал"))
 }
 
@@ -247,8 +255,15 @@ pub(crate) fn export_draft_markdown(
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    application::export_draft(&*library, &draft_id, path)
-        .map_err(|error| CommandError::from_application(error, "экспортировать черновую заметку"))
+    application::export_draft(
+        &*library,
+        &*library,
+        &application::SystemClock,
+        &application::SystemIdGenerator,
+        &draft_id,
+        path,
+    )
+    .map_err(|error| CommandError::from_application(error, "экспортировать черновую заметку"))
 }
 
 #[tauri::command]
@@ -331,6 +346,7 @@ pub(crate) async fn run_codex_review(
         message: format!("Не удалось подготовить изолированное состояние Codex: {error}"),
     })?;
     let event_app = app.clone();
+    let terminal_event_app = app.clone();
     let result = adapter
         .review(
             &request_id,
@@ -346,7 +362,36 @@ pub(crate) async fn run_codex_review(
         .lock()
         .map_err(|_| CommandError::library_access())?
         .remove(&request_id);
-    let response = result.map_err(CommandError::from_codex)?;
+    let response = match result {
+        Ok(response) => {
+            let _ = terminal_event_app.emit(
+                "codex-review-event",
+                CodexStreamEvent {
+                    request_id: request_id.clone(),
+                    kind: CodexStreamEventKind::Completed,
+                    text: String::new(),
+                },
+            );
+            response
+        }
+        Err(error) => {
+            let kind = if error.kind() == CodexErrorKind::Cancelled {
+                CodexStreamEventKind::Cancelled
+            } else {
+                CodexStreamEventKind::Error
+            };
+            let text = error.to_string();
+            let _ = terminal_event_app.emit(
+                "codex-review-event",
+                CodexStreamEvent {
+                    request_id: request_id.clone(),
+                    kind,
+                    text,
+                },
+            );
+            return Err(CommandError::from_codex(error));
+        }
+    };
     state
         .library
         .lock()
@@ -370,12 +415,36 @@ pub(crate) async fn start_codex_login(app: tauri::AppHandle) -> Result<(), Comma
         message: format!("Не удалось подготовить изолированное состояние Codex: {error}"),
     })?;
     let event_app = app.clone();
-    adapter
+    let result = adapter
         .login(move |event| {
             let _ = event_app.emit("codex-login-event", event);
         })
-        .await
-        .map_err(CommandError::from_codex)
+        .await;
+    match result {
+        Ok(()) => {
+            let _ = app.emit(
+                "codex-login-event",
+                CodexStreamEvent {
+                    request_id: "login".into(),
+                    kind: CodexStreamEventKind::Completed,
+                    text: String::new(),
+                },
+            );
+            Ok(())
+        }
+        Err(error) => {
+            let text = error.to_string();
+            let _ = app.emit(
+                "codex-login-event",
+                CodexStreamEvent {
+                    request_id: "login".into(),
+                    kind: CodexStreamEventKind::Error,
+                    text,
+                },
+            );
+            Err(CommandError::from_codex(error))
+        }
+    }
 }
 
 #[tauri::command]

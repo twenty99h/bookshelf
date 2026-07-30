@@ -562,6 +562,23 @@ test("a late older snapshot cannot replace a newer command result", async () => 
   expect(screen.queryByText("Устаревшая книга")).toBeNull();
 });
 
+test("a late snapshot restore cannot replace a newer queued mutation", async () => {
+  const slowRestore = deferred<LibraryState>();
+  const commands = fakeCommands({
+    restoreLatestSnapshot: vi.fn(() => slowRestore.promise),
+    execute: vi.fn(async () => libraryState({ weeklySessionBudget: 4 })),
+  });
+  render(LibraryPage, { props: { commands } });
+  await fireEvent.click(await screen.findByRole("button", { name: "Настройки" }));
+  void fireEvent.click(screen.getByRole("button", { name: "Восстановить снимок" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Изучение" }));
+  await fireEvent.click(screen.getByRole("button", { name: "4" }));
+  expect(await screen.findByRole("heading", { name: "4 сеанса" })).toBeTruthy();
+
+  slowRestore.resolve(libraryState({ weeklySessionBudget: 2, workspaceNote: "Устаревший снимок" }));
+  expect(await screen.findByRole("heading", { name: "4 сеанса" })).toBeTruthy();
+});
+
 test("Codex receives only the review package after explicit confirmation", async () => {
   const state = libraryState({
     books: [book("book-1", "Надёжные системы")],

@@ -8,11 +8,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Archive и snapshot application APIs оркестрируют отдельные SQLite/filesystem/archive adapters через небольшие интерфейсы.
-- [ ] Успешный импорт или restore возвращает полный атомарный `LibraryState` согласно ADR-0006.
-- [ ] Archive round-trip на реальных временных ресурсах покрывает верный пароль, неверный пароль, повреждение и прерванную запись.
-- [ ] Codex login state, logs и transient AI state отсутствуют в архиве.
-- [ ] Development format может измениться несовместимо, но новый актуальный format закреплён round-trip tests без legacy aliases.
-- [ ] Page-level tests через fake command adapter покрывают export, import, restore, progress/error и связанные настройки.
-- [ ] Ticket сохраняет связь с [исходным Rust finding 06](../../bookshelf-code-review/issues/06-rust-domain-and-persistence-boundaries.md), не изменяя его.
-- [ ] Проходят все frontend- и Rust-команды из `AGENTS.md`; generated bindings имеют только ожидаемый diff.
+- [x] Archive и snapshot application APIs оркестрируют отдельные SQLite/filesystem/archive adapters через небольшие интерфейсы.
+- [x] Успешный импорт или restore возвращает полный атомарный `LibraryState` согласно ADR-0006.
+- [x] Archive round-trip на реальных временных ресурсах покрывает верный пароль, неверный пароль, повреждение и прерванную запись.
+- [x] Codex login state, logs и transient AI state отсутствуют в архиве.
+- [x] Development format может измениться несовместимо, но новый актуальный format закреплён round-trip tests без legacy aliases.
+- [x] Page-level tests через fake command adapter покрывают export, import, restore, progress/error и связанные настройки.
+- [x] Ticket сохраняет связь с [исходным Rust finding 06](../../bookshelf-code-review/issues/06-rust-domain-and-persistence-boundaries.md), не изменяя его.
+- [x] Проходят все frontend- и Rust-команды из `AGENTS.md`; generated bindings имеют только ожидаемый diff.

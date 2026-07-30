@@ -8,11 +8,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Правила черновой заметки находятся в чистом domain-коде, а сценарии выполняются application API без Tauri, SQLite и filesystem dependencies.
-- [ ] Небольшой `LibraryRepository`, production SQLite adapter, in-memory test adapter, `Clock` и `IdGenerator` поддерживают этот срез.
-- [ ] Сохранение черновой заметки проходит через `execute_library_action`; дублирующая изменяющая IPC-команда удалена вместе с frontend caller.
-- [ ] Форма владеет незавершённым локальным состоянием и передаёт узкие предметные callbacks.
-- [ ] Page-level тесты с fake command adapter покрывают все пять исходов жизненного цикла и ошибки.
-- [ ] Domain/application tests покрывают переходы и детерминированные ids/time; export проверен на временном файле.
-- [ ] Ticket сохраняет связь с [исходным Rust finding 06](../../bookshelf-code-review/issues/06-rust-domain-and-persistence-boundaries.md), не изменяя его.
-- [ ] Проходят все frontend- и Rust-команды из `AGENTS.md`; generated bindings имеют только ожидаемый diff.
+- [x] Правила черновой заметки находятся в чистом domain-коде, а сценарии выполняются application API без Tauri, SQLite и filesystem dependencies.
+- [x] Небольшой `LibraryRepository`, production SQLite adapter, in-memory test adapter, `Clock` и `IdGenerator` поддерживают этот срез.
+- [x] Сохранение черновой заметки проходит через `execute_library_action`; дублирующая изменяющая IPC-команда удалена вместе с frontend caller.
+- [x] Форма владеет незавершённым локальным состоянием и передаёт узкие предметные callbacks.
+- [x] Page-level тесты с fake command adapter покрывают все пять исходов жизненного цикла и ошибки.
+- [x] Domain/application tests покрывают переходы и детерминированные ids/time; export проверен на временном файле.
+- [x] Ticket сохраняет связь с [исходным Rust finding 06](../../bookshelf-code-review/issues/06-rust-domain-and-persistence-boundaries.md), не изменяя его.
+- [x] Проходят все frontend- и Rust-команды из `AGENTS.md`; generated bindings имеют только ожидаемый diff.

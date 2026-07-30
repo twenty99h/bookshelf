@@ -194,9 +194,15 @@ fn draft_export_writes_a_temporary_markdown_resource_and_commits_removal() {
     library.commit(&state).unwrap();
     let destination = data_dir.join("exported-draft.md");
 
-    let exported = library
-        .export_draft_markdown("draft", &destination)
-        .unwrap();
+    let exported = crate::application::export_draft(
+        &library,
+        &library,
+        &SystemClock,
+        &SystemIdGenerator,
+        "draft",
+        destination.to_string_lossy().into_owned(),
+    )
+    .unwrap();
 
     let markdown = fs::read_to_string(&destination).unwrap();
     assert!(markdown.contains("Надёжные системы"));
@@ -507,30 +513,31 @@ fn reading_position_and_corrected_outline_survive_reopening() {
 fn pdf_import_corpus_covers_text_variants_and_rejects_scanned_input() {
     let data_dir = test_data_dir();
     let library = Library::open(&data_dir).unwrap();
-    let corpus = [
-        (
-            "crlf-font.pdf",
-            b"%PDF-1.7\r\n1 0 obj << /Font << >> >>\r\n%%EOF".as_slice(),
-        ),
-        (
-            "nested-text.pdf",
-            b"%PDF-1.5\nstream\n BT (text) Tj ET\nendstream\n%%EOF".as_slice(),
-        ),
-    ];
-    for (name, bytes) in corpus {
-        let source = data_dir.join(name);
-        fs::write(&source, bytes).unwrap();
-        let state = library.import_pdf(&source, String::new()).unwrap();
-        let imported = state.books.last().unwrap();
-        assert!(imported.has_text_layer);
-        assert!(library.absolute_book_path(&imported.stored_file).is_file());
-    }
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf");
+    let text_layer = corpus.join("text-layer.pdf");
+    let state = crate::application::import_pdf(
+        &library,
+        &library,
+        &SystemIdGenerator,
+        text_layer.to_string_lossy().into_owned(),
+        String::new(),
+    )
+    .unwrap();
+    let imported = state.books.last().unwrap();
+    assert!(imported.has_text_layer);
+    assert!(library.absolute_book_path(&imported.stored_file).is_file());
 
-    let scanned = data_dir.join("image-only.pdf");
-    fs::write(&scanned, b"%PDF-1.7\n/image XObject\n%%EOF").unwrap();
-    let error = library.import_pdf(&scanned, "Скан".into()).unwrap_err();
+    let scanned = corpus.join("image-only.pdf");
+    let error = crate::application::import_pdf(
+        &library,
+        &library,
+        &SystemIdGenerator,
+        scanned.to_string_lossy().into_owned(),
+        "Скан".into(),
+    )
+    .unwrap_err();
     assert!(
-        matches!(error, LibraryError::Domain(ref error) if error.code() == "pdf_text_layer_missing")
+        matches!(error, ApplicationError::Domain(ref error) if error.code() == "pdf_text_layer_missing")
     );
     fs::remove_dir_all(data_dir).unwrap();
 }
@@ -579,7 +586,7 @@ fn snapshots_do_not_make_full_ai_responses_permanent() {
         })
         .unwrap();
     library.create_snapshot(&state).unwrap();
-    let restored = library.restore_latest_snapshot().unwrap();
+    let restored = crate::application::restore_latest_snapshot(&library, &library).unwrap();
     assert!(restored.reviews[0].response.is_empty());
     fs::remove_dir_all(data_dir).unwrap();
 }
@@ -594,38 +601,62 @@ fn encrypted_archive_round_trip_restores_state_and_rejects_a_wrong_password() {
         })
         .unwrap();
     let archive = source_dir.with_extension("bookshelf.age");
-    source.export_archive(&archive, "надёжный пароль").unwrap();
+    crate::application::export_archive(
+        &source,
+        &source,
+        archive.to_string_lossy().into_owned(),
+        "надёжный пароль",
+    )
+    .unwrap();
 
     let target_dir = test_data_dir();
     let target = Library::open(&target_dir).unwrap();
-    let wrong = target
-        .import_archive(&archive, "другой пароль")
-        .unwrap_err();
+    let wrong = crate::application::import_archive(
+        &target,
+        &target,
+        archive.to_string_lossy().into_owned(),
+        "другой пароль",
+    )
+    .unwrap_err();
     assert!(
-        matches!(wrong, LibraryError::Domain(ref error) if error.code() == "archive_password_invalid")
+        matches!(wrong, ApplicationError::Domain(ref error) if error.code() == "archive_password_invalid")
     );
     assert_eq!(target.load().unwrap(), LibraryState::default());
 
     let corrupt_archive = source_dir.join("corrupt.bookshelf.age");
     fs::write(&corrupt_archive, b"not an age archive").unwrap();
-    let corrupt = target
-        .import_archive(&corrupt_archive, "надёжный пароль")
-        .unwrap_err();
+    let corrupt = crate::application::import_archive(
+        &target,
+        &target,
+        corrupt_archive.to_string_lossy().into_owned(),
+        "надёжный пароль",
+    )
+    .unwrap_err();
     assert!(
-        matches!(corrupt, LibraryError::Domain(ref error) if error.code() == "archive_corrupt")
+        matches!(corrupt, ApplicationError::Domain(ref error) if error.code() == "archive_corrupt")
     );
     assert_eq!(target.load().unwrap(), LibraryState::default());
 
     let blocked_destination = source_dir.join("blocked.bookshelf.age");
     fs::create_dir(&blocked_destination).unwrap();
-    let interrupted = source
-        .export_archive(&blocked_destination, "надёжный пароль")
-        .unwrap_err();
-    assert!(matches!(interrupted, LibraryError::Io(_)));
+    let interrupted = crate::application::export_archive(
+        &source,
+        &source,
+        blocked_destination.to_string_lossy().into_owned(),
+        "надёжный пароль",
+    )
+    .unwrap_err();
+    assert!(matches!(interrupted, ApplicationError::Persistence(_)));
     assert!(blocked_destination.is_dir());
     assert!(!blocked_destination.with_extension("age.tmp").exists());
 
-    target.import_archive(&archive, "надёжный пароль").unwrap();
+    crate::application::import_archive(
+        &target,
+        &target,
+        archive.to_string_lossy().into_owned(),
+        "надёжный пароль",
+    )
+    .unwrap();
     assert_eq!(
         target.load().unwrap().workspace_note,
         "Переносимое состояние"

@@ -8,8 +8,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Linux CI запускает frontend format/lint/check/test/build, Rust fmt/clippy/test и проверку generated bindings.
-- [ ] Windows CI запускает Rust-проверки и production Tauri build.
-- [ ] CI использует зафиксированные Node, pnpm и Rust toolchains с корректным dependency caching.
-- [ ] Трёхплатформенная release-candidate матрица не добавляется в быстрый обязательный workflow.
-- [ ] Локально проходят все frontend- и Rust-команды из `AGENTS.md`; workflow syntax проверен доступным локальным способом.
+- [x] Linux CI запускает frontend format/lint/check/test/build, Rust fmt/clippy/test и проверку generated bindings.
+- [x] Windows CI запускает Rust-проверки и production Tauri build.
+- [x] CI использует зафиксированные Node, pnpm и Rust toolchains с корректным dependency caching.
+- [x] Трёхплатформенная release-candidate матрица не добавляется в быстрый обязательный workflow.
+- [x] Локально проходят все frontend- и Rust-команды из `AGENTS.md`; workflow syntax проверен доступным локальным способом.

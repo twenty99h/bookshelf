@@ -13,7 +13,6 @@ use std::{
 };
 
 mod archive;
-mod exports;
 mod reading;
 mod search;
 
@@ -304,8 +303,12 @@ fn application_error(error: LibraryError) -> ApplicationError {
 }
 
 impl ReadingPort for Library {
-    fn import_pdf(&self, path: String, title: String) -> Result<LibraryState, ApplicationError> {
-        Library::import_pdf(self, path, title).map_err(application_error)
+    fn store_pdf(&self, path: String, title: String, id: String) -> Result<Book, ApplicationError> {
+        self.store_pdf(path, title, id).map_err(application_error)
+    }
+
+    fn remove_pdf(&self, stored_file: &str) -> Result<(), io::Error> {
+        remove_if_present(&self.absolute_book_path(stored_file))
     }
 }
 
@@ -316,30 +319,34 @@ impl SearchPort for Library {
 }
 
 impl ArchivePort for Library {
-    fn export_archive(&self, path: String, password: &str) -> Result<(), ApplicationError> {
-        Library::export_archive(self, path, password).map_err(application_error)
-    }
-
-    fn import_archive(
+    fn write_archive(
         &self,
         path: String,
         password: &str,
-    ) -> Result<LibraryState, ApplicationError> {
-        Library::import_archive(self, path, password).map_err(application_error)
+        state: &LibraryState,
+    ) -> Result<(), ApplicationError> {
+        self.write_archive(path, password, state)
+            .map_err(application_error)
     }
 
-    fn restore_latest_snapshot(&self) -> Result<LibraryState, ApplicationError> {
-        Library::restore_latest_snapshot(self).map_err(application_error)
+    fn read_archive(&self, path: String, password: &str) -> Result<LibraryState, ApplicationError> {
+        self.read_archive(path, password).map_err(application_error)
+    }
+
+    fn read_latest_snapshot(&self) -> Result<LibraryState, ApplicationError> {
+        self.read_latest_snapshot().map_err(application_error)
+    }
+
+    fn rollback_import(&self, state: &LibraryState) {
+        for book in &state.books {
+            let _ = remove_if_present(&self.absolute_book_path(&book.stored_file));
+        }
     }
 }
 
 impl ExportPort for Library {
-    fn export_material(&self, material_id: &str, path: String) -> Result<(), ApplicationError> {
-        Library::export_material_markdown(self, material_id, path).map_err(application_error)
-    }
-
-    fn export_draft(&self, draft_id: &str, path: String) -> Result<LibraryState, ApplicationError> {
-        Library::export_draft_markdown(self, draft_id, path).map_err(application_error)
+    fn write_text(&self, path: String, contents: &str) -> Result<(), io::Error> {
+        atomic_write(Path::new(&path), contents.as_bytes())
     }
 }
 

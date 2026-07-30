@@ -31,12 +31,14 @@
     run,
     bookTitle,
     onLibrary,
+    onSnapshotRequest,
   }: {
     library: LibraryState;
     commands: LibraryCommands;
     run: (action: LibraryAction, success?: string) => Promise<void>;
     bookTitle: (bookId: string) => string;
-    onLibrary: (state: LibraryState) => void;
+    onLibrary: (state: LibraryState, order?: number) => void;
+    onSnapshotRequest: () => number;
   } = $props();
   let selectedId = $state("");
   let formulation = $state("");
@@ -153,6 +155,7 @@
     reviewResponse = "";
     reviewError = "";
     reviewRunning = true;
+    const order = onSnapshotRequest();
     try {
       onLibrary(
         await commands.runCodexReview(
@@ -162,6 +165,7 @@
           reviewPackageText,
           reviewRecallAnswer || undefined,
         ),
+        order,
       );
     } catch (cause) {
       reviewError = commandErrorMessage(cause);

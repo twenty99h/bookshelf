@@ -1,4 +1,4 @@
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
 
 export async function renderPdfPage(
   pdfjs: typeof import("pdfjs-dist"),
@@ -35,7 +35,10 @@ export function selectedPdfText(textLayer: HTMLDivElement): { excerpt: string; c
   return { excerpt, context: text.slice(start, text.indexOf(excerpt) + excerpt.length + 180) };
 }
 
-export async function destroyPdf(pdf: PDFDocumentProxy | null, textLayer: HTMLDivElement | undefined): Promise<void> {
+export async function destroyPdf(
+  loadingTask: PDFDocumentLoadingTask | null,
+  textLayer: HTMLDivElement | undefined,
+): Promise<void> {
   textLayer?.replaceChildren();
-  await pdf?.cleanup();
+  await loadingTask?.destroy();
 }

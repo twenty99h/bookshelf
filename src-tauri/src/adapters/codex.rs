@@ -8,7 +8,7 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{ChildStdout, Command},
     time::{self, Duration},
 };
@@ -19,8 +19,19 @@ use ts_rs::TS;
 #[ts(export)]
 pub struct CodexStreamEvent {
     pub request_id: String,
-    pub kind: &'static str,
+    pub kind: CodexStreamEventKind,
     pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CodexStreamEventKind {
+    Delta,
+    DeviceCode,
+    Completed,
+    Cancelled,
+    Error,
 }
 
 #[derive(Serialize)]
@@ -182,11 +193,12 @@ impl CodexError {
         let message = message.into();
         match code {
             "codex_cancelled" => Self::Cancelled(message),
-            "codex_unavailable" => Self::Unavailable(message),
-            "codex_protocol_failed" => Self::Protocol(message),
-            "codex_login_failed" | "codex_review_failed" | "codex_package_empty" => {
-                Self::Rejected(message)
-            }
+            "codex_unavailable" | "codex_sidecar_missing" => Self::Unavailable(message),
+            "codex_protocol_failed" | "codex_protocol_incompatible" => Self::Protocol(message),
+            "codex_login_failed"
+            | "codex_login_required"
+            | "codex_review_failed"
+            | "codex_package_empty" => Self::Rejected(message),
             _ => Self::Process(message),
         }
     }
@@ -335,7 +347,7 @@ impl CodexAdapter {
                     answer.push_str(&delta);
                     emit(CodexStreamEvent {
                         request_id: request_id.into(),
-                        kind: "delta",
+                        kind: CodexStreamEventKind::Delta,
                         text: delta,
                     });
                 }
@@ -375,7 +387,7 @@ impl CodexAdapter {
         let login: LoginStartResult = response(&mut lines, 2).await?;
         emit(CodexStreamEvent {
             request_id: "login".into(),
-            kind: "deviceCode",
+            kind: CodexStreamEventKind::DeviceCode,
             text: format!("{}\n{}", login.verification_url, login.user_code),
         });
         loop {
@@ -482,8 +494,8 @@ async fn send(
     })
 }
 
-async fn response<T: DeserializeOwned>(
-    lines: &mut Lines<BufReader<ChildStdout>>,
+async fn response<T: DeserializeOwned, R: AsyncBufRead + Unpin>(
+    lines: &mut Lines<R>,
     id: u64,
 ) -> Result<T, CodexError> {
     loop {
@@ -627,5 +639,38 @@ mod tests {
             CodexError::new("codex_crashed", "crashed").kind(),
             CodexErrorKind::Process
         );
+    }
+
+    #[test]
+    fn fake_transport_covers_login_refusal_schema_mismatch_and_crash() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut refused = BufReader::new(
+                    b"{\"id\":1,\"result\":null,\"error\":{\"message\":\"login required\"}}\n"
+                        .as_slice(),
+                )
+                .lines();
+                let error = response::<serde_json::Value, _>(&mut refused, 1)
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.kind(), CodexErrorKind::Rejected);
+
+                let mut incompatible =
+                    BufReader::new(b"{\"id\":1,\"result\":42}\n".as_slice()).lines();
+                let error = match response::<ProtocolId, _>(&mut incompatible, 1).await {
+                    Err(error) => error,
+                    Ok(_) => panic!("incompatible response was accepted"),
+                };
+                assert_eq!(error.kind(), CodexErrorKind::Protocol);
+
+                let mut crashed = BufReader::new(b"".as_slice()).lines();
+                let error = response::<serde_json::Value, _>(&mut crashed, 1)
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.kind(), CodexErrorKind::Process);
+            });
     }
 }

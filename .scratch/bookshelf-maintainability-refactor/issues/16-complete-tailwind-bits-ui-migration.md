@@ -8,9 +8,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Весь оставшийся прикладной UI использует Tailwind utilities без `<style>`, `@apply` и новых семантических CSS-классов.
-- [ ] Глобальные стили содержат только Tailwind import, theme tokens, reset и reduced-motion baseline.
-- [ ] Единственное локальное CSS-исключение содержит только необходимые PDF.js vendor/display-layer rules без Bookshelf selectors.
-- [ ] Сложные controls используют shared Bits UI wrappers; повторяющееся оформление выражено компонентами, а не новыми CSS classes.
-- [ ] Visual system, layout и пользовательские тексты не изменены; keyboard, focus, accessible names и reduced-motion защищены тестами.
-- [ ] Проходят все frontend-команды из `AGENTS.md`.
+- [x] Весь оставшийся прикладной UI использует Tailwind utilities без `<style>`, `@apply` и новых семантических CSS-классов.
+- [x] Глобальные стили содержат только Tailwind import, theme tokens, reset и reduced-motion baseline.
+- [x] Единственное локальное CSS-исключение содержит только необходимые PDF.js vendor/display-layer rules без Bookshelf selectors.
+- [x] Сложные controls используют shared Bits UI wrappers; повторяющееся оформление выражено компонентами, а не новыми CSS classes.
+- [x] Visual system, layout и пользовательские тексты не изменены; keyboard, focus, accessible names и reduced-motion защищены тестами.
+- [x] Проходят все frontend-команды из `AGENTS.md`.

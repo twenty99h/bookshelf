@@ -8,10 +8,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] Page-local session единолично владеет атомарным `LibraryState`, типизированной навигацией и общими loading/error-состояниями.
-- [ ] Изменяющие команды выполняются в определённом порядке, а поздний устаревший ответ не заменяет более новый снимок.
-- [ ] Production Tauri adapter и явно переданный in-memory fake реализуют один узкий интерфейс предметных команд.
-- [ ] Page-level тесты через Testing Library проверяют loading, ошибку, навигацию, очередь действий и атомарную замену снимка без mock Tauri `invoke`.
-- [ ] Ручная нормализация с fallback-полями для сгенерированного `LibraryState` удалена.
-- [ ] Глобальный store, TanStack Query и универсальный component dispatch не добавлены.
-- [ ] Проходят все frontend-команды из `AGENTS.md`; generated bindings не имеют неожиданного diff.
+- [x] Page-local session единолично владеет атомарным `LibraryState`, типизированной навигацией и общими loading/error-состояниями.
+- [x] Изменяющие команды выполняются в определённом порядке, а поздний устаревший ответ не заменяет более новый снимок.
+- [x] Production Tauri adapter и явно переданный in-memory fake реализуют один узкий интерфейс предметных команд.
+- [x] Page-level тесты через Testing Library проверяют loading, ошибку, навигацию, очередь действий и атомарную замену снимка без mock Tauri `invoke`.
+- [x] Ручная нормализация с fallback-полями для сгенерированного `LibraryState` удалена.
+- [x] Глобальный store, TanStack Query и универсальный component dispatch не добавлены.
+- [x] Проходят все frontend-команды из `AGENTS.md`; generated bindings не имеют неожиданного diff.

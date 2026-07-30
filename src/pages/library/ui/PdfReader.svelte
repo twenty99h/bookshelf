@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { ZoomIn, ZoomOut } from "@lucide/svelte";
   import { Button, IconButton, NumberField, SelectField } from "@/shared/ui";
-  import type { PDFDocumentProxy } from "pdfjs-dist";
+  import type { OutlineItem } from "@/shared/api";
+  import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
   import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
   import "pdfjs-dist/web/pdf_viewer.css";
   import { destroyPdf, renderPdfPage as renderPageLayer, selectedPdfText } from "../lib/pdf-renderer";
@@ -18,22 +19,23 @@
     onOutline,
   }: {
     url: string;
-    savedOutline?: { id: string; title: string; page: number; parentId?: string | null }[];
+    savedOutline?: OutlineItem[];
     initialPage?: number;
     initialZoom?: number;
     initialScroll?: number;
     onPosition: (page: number, zoom: number, scroll: number) => void;
     onSelection: (excerpt: string, context: string) => void;
-    onOutline: (outline: { id: string; title: string; page: number; parentId: string | null }[]) => void;
+    onOutline: (outline: OutlineItem[]) => void;
   } = $props();
   let canvas: HTMLCanvasElement;
   let textLayerContainer: HTMLDivElement;
   let scrollContainer: HTMLDivElement;
   let pdfDocument = $state<PDFDocumentProxy | null>(null);
+  let loadingTask: PDFDocumentLoadingTask | null = null;
   let page = $state(1);
   let zoom = $state(1);
   let pageCount = $state(0);
-  let embeddedOutline = $state<{ id: string; title: string; page: number; parentId: string | null }[]>([]);
+  let embeddedOutline = $state<OutlineItem[]>([]);
   let navigationOutline = $derived(savedOutline.length > 0 ? savedOutline : embeddedOutline);
   let error = $state("");
   let rendering = false;
@@ -45,7 +47,7 @@
     globalThis.document.addEventListener("selectionchange", selectText);
     return () => {
       globalThis.document.removeEventListener("selectionchange", selectText);
-      void destroyPdf(pdfDocument, textLayerContainer);
+      void destroyPdf(loadingTask, textLayerContainer);
     };
   });
 
@@ -55,12 +57,13 @@
       pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
       page = initialPage;
       zoom = initialZoom;
-      pdfDocument = await pdfjs.getDocument({
+      loadingTask = pdfjs.getDocument({
         url,
         wasmUrl: "/pdfjs/wasm/",
         isImageDecoderSupported: false,
         isOffscreenCanvasSupported: false,
-      }).promise;
+      });
+      pdfDocument = await loadingTask.promise;
       pageCount = pdfDocument.numPages;
       embeddedOutline = await readOutline(pdfDocument);
       if (savedOutline.length === 0 && embeddedOutline.length > 0) onOutline(embeddedOutline);
@@ -74,7 +77,7 @@
   async function readOutline(pdf: PDFDocumentProxy) {
     const items = await pdf.getOutline();
     if (!items) return [];
-    const resolved: { id: string; title: string; page: number; parentId: string | null }[] = [];
+    const resolved: OutlineItem[] = [];
     async function visit(nodes: typeof items, parentId: string | null) {
       for (const item of nodes) {
         let itemId = parentId;

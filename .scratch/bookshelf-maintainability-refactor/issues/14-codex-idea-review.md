@@ -8,10 +8,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] Codex adapter единолично владеет sidecar lifecycle и JSONL transport; синхронные domain/application scenarios не становятся async без необходимости.
-- [ ] IPC публикует небольшой набор типизированных предметных событий для progress, результата, отмены и ошибки.
-- [ ] UI Codex получает только сформированный пакет проверки, отображает поток и сохраняет локальное состояние взаимодействия.
-- [ ] Отмена, отсутствие binary, отказ входа, несовместимая schema и crash дают стабильные ожидаемые результаты.
-- [ ] Tests используют управляемый fake process/transport на application boundary и не требуют реального входа ChatGPT.
-- [ ] Codex login state и logs не попадают в постоянный `LibraryState` или экспортируемый архив.
-- [ ] Проходят все frontend- и Rust-команды из `AGENTS.md`; generated bindings имеют только ожидаемый diff.
+- [x] Codex adapter единолично владеет sidecar lifecycle и JSONL transport; синхронные domain/application scenarios не становятся async без необходимости.
+- [x] IPC публикует небольшой набор типизированных предметных событий для progress, результата, отмены и ошибки.
+- [x] UI Codex получает только сформированный пакет проверки, отображает поток и сохраняет локальное состояние взаимодействия.
+- [x] Отмена, отсутствие binary, отказ входа, несовместимая schema и crash дают стабильные ожидаемые результаты.
+- [x] Tests используют управляемый fake process/transport на application boundary и не требуют реального входа ChatGPT.
+- [x] Codex login state и logs не попадают в постоянный `LibraryState` или экспортируемый архив.
+- [x] Проходят все frontend- и Rust-команды из `AGENTS.md`; generated bindings имеют только ожидаемый diff.

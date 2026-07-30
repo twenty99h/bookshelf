@@ -1,4 +1,4 @@
-import type { Book, CodexStreamEvent, LibraryAction, LibraryState, ReviewKind, SearchResult } from "@/shared/api";
+import type { CodexStreamEvent, LibraryAction, LibraryState, ReviewKind, SearchResult } from "@/shared/api";
 
 export type StopListening = () => void;
 
@@ -30,5 +30,3 @@ export interface LibraryCommands {
 }
 
 export type LibraryView = "library" | "queue" | "ideas" | "study";
-
-export type LibraryBook = Book;

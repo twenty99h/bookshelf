@@ -1,11 +1,12 @@
 use super::*;
 
 impl Library {
-    pub fn import_pdf(
+    pub(super) fn store_pdf(
         &self,
         source: impl AsRef<Path>,
         title: String,
-    ) -> Result<LibraryState, LibraryError> {
+        id: String,
+    ) -> Result<Book, LibraryError> {
         let bytes = fs::read(source.as_ref())?;
         if !bytes.starts_with(b"%PDF") {
             return Err(DomainError::new("pdf_invalid", "Выбранный файл не является PDF").into());
@@ -29,25 +30,17 @@ impl Library {
         } else {
             title
         };
-        let id = new_id("book");
         let relative = format!("books/{id}.pdf");
         let target = self.data_dir.join(&relative);
         let temporary = target.with_extension("pdf.tmp");
         fs::write(&temporary, bytes)?;
         fs::rename(&temporary, &target)?;
-        let mut state = self.load()?;
-        state.books.push(Book {
+        Ok(Book {
             id,
             title,
             stored_file: relative,
             has_text_layer,
             ..Book::default()
-        });
-        if let Err(error) = self.replace_state(&state) {
-            let _ = fs::remove_file(&target);
-            return Err(error.into());
-        }
-        self.create_snapshot(&state)?;
-        Ok(state)
+        })
     }
 }

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Book } from "./generated/Book";
 import type { CodexStreamEvent } from "./generated/CodexStreamEvent";
+import type { CodexStreamEventKind } from "./generated/CodexStreamEventKind";
 import type { CommandError } from "./generated/CommandError";
 import type { DraftNote } from "./generated/DraftNote";
 import type { Experiment } from "./generated/Experiment";
@@ -27,6 +28,7 @@ import type { TransferMaterial } from "./generated/TransferMaterial";
 export type {
   Book,
   CodexStreamEvent,
+  CodexStreamEventKind,
   CommandError,
   DraftNote,
   Experiment,

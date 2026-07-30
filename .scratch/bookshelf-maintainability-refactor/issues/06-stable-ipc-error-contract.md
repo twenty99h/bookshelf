@@ -8,9 +8,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Внутренние domain/application/adapter errors представлены закрытыми `thiserror` enums на затронутых границах.
-- [ ] IPC отображает ошибки в сериализуемый `{ code, message }` со стабильным конечным набором codes.
-- [ ] Существующие видимые пользователю сообщения сохранены там, где поведение не меняется.
-- [ ] Contract tests проверяют валидацию входа и отображение репрезентативных domain, persistence, filesystem и external-process ошибок.
-- [ ] TypeScript bindings регенерированы, и изменились только ожидаемые contracts.
-- [ ] Проходят все frontend- и Rust-команды из `AGENTS.md`.
+- [x] Внутренние domain/application/adapter errors представлены закрытыми `thiserror` enums на затронутых границах.
+- [x] IPC отображает ошибки в сериализуемый `{ code, message }` со стабильным конечным набором codes.
+- [x] Существующие видимые пользователю сообщения сохранены там, где поведение не меняется.
+- [x] Contract tests проверяют валидацию входа и отображение репрезентативных domain, persistence, filesystem и external-process ошибок.
+- [x] TypeScript bindings регенерированы, и изменились только ожидаемые contracts.
+- [x] Проходят все frontend- и Rust-команды из `AGENTS.md`.
