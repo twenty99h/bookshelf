@@ -20,8 +20,10 @@ import type { ReviewDecision } from "./generated/ReviewDecision";
 import type { ReviewKind } from "./generated/ReviewKind";
 import type { SearchResult } from "./generated/SearchResult";
 import type { SearchResultKind } from "./generated/SearchResultKind";
-import type { StudySession } from "./generated/StudySession";
-import type { SessionStatus } from "./generated/SessionStatus";
+import type { SourceFragment } from "./generated/SourceFragment";
+import type { StudyCompletionDraft } from "./generated/StudyCompletionDraft";
+import type { StudyMilestone } from "./generated/StudyMilestone";
+import type { StudyStatus } from "./generated/StudyStatus";
 import type { Topic } from "./generated/Topic";
 import type { TransferMaterial } from "./generated/TransferMaterial";
 
@@ -47,8 +49,10 @@ export type {
   ReviewKind,
   SearchResult,
   SearchResultKind,
-  StudySession,
-  SessionStatus,
+  SourceFragment,
+  StudyCompletionDraft,
+  StudyMilestone,
+  StudyStatus,
   Topic,
   TransferMaterial,
 };

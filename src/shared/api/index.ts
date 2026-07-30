@@ -29,5 +29,8 @@ export {
   type RecallRating,
   type ReviewKind,
   type SearchResult,
-  type SessionStatus,
+  type SourceFragment,
+  type StudyCompletionDraft,
+  type StudyMilestone,
+  type StudyStatus,
 } from "./library";

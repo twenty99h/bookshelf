@@ -21,8 +21,8 @@
   } = $props();
 
   const variants: Record<Variant, string> = {
-    primary: "bg-leaf text-white hover:bg-[#465a39]",
-    secondary: "bg-spine-raised text-white hover:bg-[#283126]",
+    primary: "bg-iris-strong text-white hover:bg-[#4d48aa]",
+    secondary: "border border-white/10 bg-spine-raised text-mist hover:bg-[#303d50]",
   };
 </script>
 

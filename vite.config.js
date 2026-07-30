@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const browserAdapter = process.env.BOOKSHELF_BROWSER_ADAPTER === "browser";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -14,6 +16,9 @@ export default defineConfig(async () => ({
       "@/pages": new URL("./src/pages", import.meta.url).pathname,
       "@/shared": new URL("./src/shared", import.meta.url).pathname,
     },
+  },
+  define: {
+    __BOOKSHELF_BROWSER_ADAPTER__: JSON.stringify(browserAdapter),
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

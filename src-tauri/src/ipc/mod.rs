@@ -13,7 +13,6 @@ use std::{
     },
 };
 use tauri::{Emitter, Manager};
-use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 use ts_rs::TS;
 
@@ -96,27 +95,16 @@ impl CommandError {
 
 #[tauri::command]
 pub(crate) fn load_library(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<LibraryState, CommandError> {
     let library = state
         .library
         .lock()
         .map_err(|_| CommandError::library_access())?;
-    let snapshot = library
+    library
         .load()
-        .map_err(|error| CommandError::persistence("открыть личную библиотеку", error))?;
-    if let Ok(Some(debt)) = library.claim_debt_notification() {
-        let _ = app
-            .notification()
-            .builder()
-            .title("Bookshelf")
-            .body(format!(
-                "В очереди изучения {debt} действий. Выберите удобный следующий шаг."
-            ))
-            .show();
-    }
-    Ok(snapshot)
+        .map_err(|error| CommandError::persistence("открыть личную библиотеку", error))
 }
 
 #[tauri::command]

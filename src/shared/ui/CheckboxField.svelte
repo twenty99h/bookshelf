@@ -27,7 +27,7 @@
     {id}
     bind:checked={() => checked, setChecked}
     {disabled}
-    class="flex size-5 shrink-0 items-center justify-center rounded border border-slate-400 bg-paper-raised text-white outline-none data-[state=checked]:border-leaf data-[state=checked]:bg-leaf focus-visible:ring-3 focus-visible:ring-focus disabled:opacity-50"
+    class="flex size-5 shrink-0 items-center justify-center rounded border border-white/25 bg-night/45 text-white outline-none data-[state=checked]:border-iris-strong data-[state=checked]:bg-iris-strong focus-visible:ring-3 focus-visible:ring-focus disabled:opacity-50"
   >
     {#snippet children({ checked })}
       {#if checked}<Check class="size-4" strokeWidth={3} aria-hidden="true" />{/if}

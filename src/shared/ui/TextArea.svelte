@@ -18,7 +18,7 @@
   } = $props();
 </script>
 
-{#if label}<label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for={id}>{label}</label>{/if}
+{#if label}<label class="mb-1.5 block text-xs font-bold text-mist-dim" for={id}>{label}</label>{/if}
 <textarea
   {id}
   aria-label={ariaLabel}
@@ -26,5 +26,5 @@
   {placeholder}
   {disabled}
   {required}
-  class="min-h-[84px] w-full resize-y rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5 text-ink outline-none focus:border-[#697c39] focus:ring-3 focus:ring-focus disabled:opacity-50"
+  class="min-h-[84px] w-full resize-y rounded-lg border border-white/15 bg-night/45 px-3 py-2.5 text-ink outline-none placeholder:text-mist-faint focus:border-iris focus:ring-3 focus:ring-focus disabled:opacity-50"
 ></textarea>

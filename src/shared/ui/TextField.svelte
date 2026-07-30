@@ -34,5 +34,5 @@
   {disabled}
   {required}
   {type}
-  class="min-h-11 w-full min-w-0 rounded-lg border border-[#cfd1c9] bg-[#fafaf8] px-3 py-2.5 text-ink outline-none transition-shadow placeholder:text-[#91938b] focus:border-leaf focus:ring-3 focus:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
+  class="min-h-11 w-full min-w-0 rounded-lg border border-white/15 bg-night/45 px-3 py-2.5 text-ink outline-none transition-shadow placeholder:text-mist-faint focus:border-iris focus:ring-3 focus:ring-focus disabled:cursor-not-allowed disabled:opacity-50"
 />

@@ -13,11 +13,19 @@ fn main() {
     let resources_id =
         document.add_object(dictionary! { "Font" => dictionary! { "F1" => font_id } });
     let mut page_ids = Vec::new();
-    for index in 0..2 {
+    for index in 0..10 {
+        let crossing = if index == 4 {
+            "Cross-page source begins here and"
+        } else if index == 5 {
+            "continues here without losing its source address."
+        } else {
+            "Deterministic bookshelf fixture."
+        };
         let text = format!(
-            "Chapter {}: {}",
+            "Chapter {}: repeated search phrase leader replication. {} {}",
             index + 1,
-            "compressed text layer ".repeat(40)
+            crossing,
+            "compressed text layer ".repeat(20)
         );
         let content = Content {
             operations: vec![
@@ -32,6 +40,10 @@ fn main() {
                     ])],
                 ),
                 Operation::new("ET", vec![]),
+                Operation::new("q", vec![]),
+                Operation::new("re", vec![72.into(), 540.into(), 220.into(), 90.into()]),
+                Operation::new("S", vec![]),
+                Operation::new("Q", vec![]),
             ],
         };
         let mut stream = Stream::new(dictionary! {}, content.encode().unwrap());
@@ -72,7 +84,8 @@ fn main() {
             .set("Outlines", outline_id);
     }
     document.compress();
-    document
-        .save("tests/fixtures/pdf/compressed-outline-fonts.pdf")
-        .unwrap();
+    let output = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "tests/fixtures/pdf/compressed-outline-fonts.pdf".into());
+    document.save(output).unwrap();
 }

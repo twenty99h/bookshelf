@@ -21,16 +21,12 @@ pub struct LibraryState {
     pub idea_links: Vec<IdeaLink>,
     pub experiments: Vec<Experiment>,
     pub recalls: Vec<Recall>,
-    pub sessions: Vec<StudySession>,
     pub materials: Vec<TransferMaterial>,
     pub reviews: Vec<IdeaReview>,
+    pub milestones: Vec<StudyMilestone>,
+    pub completion_drafts: Vec<StudyCompletionDraft>,
     pub workspace_note: String,
     pub active_study_book_id: Option<String>,
-    pub weekly_session_budget: u8,
-    pub last_debt_change: i32,
-    pub last_debt_changed_at: u64,
-    pub debt_notification_sent_at: Option<u64>,
-    pub debt_reminder_days: u16,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
@@ -42,6 +38,13 @@ pub struct Book {
     pub has_text_layer: bool,
     pub outline: Vec<OutlineItem>,
     pub reading: ReadingPosition,
+    pub farthest_page: u32,
+    pub page_count: u32,
+    pub content_hash: String,
+    pub reader: ReaderPreferences,
+    pub study_status: StudyStatus,
+    pub study_cycles: Vec<StudyCycle>,
+    pub archived: bool,
     pub reading_completed: bool,
     pub study_completed: bool,
     pub retrospective: Option<Retrospective>,
@@ -76,6 +79,68 @@ pub struct ReadingPosition {
     pub scroll: f32,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderPreferences {
+    pub document_mode: DocumentMode,
+    pub invert_images: bool,
+    pub sidebar_open: bool,
+    pub sidebar_tab: ReaderSidebarTab,
+    pub sidebar_width: u16,
+}
+
+impl Default for ReaderPreferences {
+    fn default() -> Self {
+        Self {
+            document_mode: DocumentMode::MutedLight,
+            invert_images: true,
+            sidebar_open: false,
+            sidebar_tab: ReaderSidebarTab::Note,
+            sidebar_width: 400,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum DocumentMode {
+    #[default]
+    MutedLight,
+    Original,
+    DarkInverted,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ReaderSidebarTab {
+    #[default]
+    Note,
+    Outline,
+    Search,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum StudyStatus {
+    #[default]
+    Ready,
+    Active,
+    Paused,
+    ReadyToComplete,
+    Completed,
+    Repeating,
+    Archived,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyCycle {
+    pub id: String,
+    pub started_at: u64,
+    pub completed_at: Option<u64>,
+    pub retrospective: Option<Retrospective>,
+}
+
 impl Default for ReadingPosition {
     fn default() -> Self {
         Self {
@@ -96,6 +161,7 @@ pub struct DraftNote {
     pub excerpt: String,
     pub context: String,
     pub comment: String,
+    pub fragments: Vec<SourceFragment>,
     pub created_at: u64,
 }
 
@@ -181,6 +247,20 @@ pub struct Experiment {
     pub conclusion: String,
     pub successful: bool,
     pub completed: bool,
+    pub status: ExperimentStatus,
+    pub cancellation_reason: String,
+    pub next_step: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ExperimentStatus {
+    #[default]
+    Intent,
+    Running,
+    Reviewing,
+    Completed,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
@@ -191,17 +271,6 @@ pub struct Recall {
     pub answer: String,
     pub rating: RecallRating,
     pub next_at: u64,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct StudySession {
-    pub id: String,
-    pub intention: String,
-    pub planned_at: u64,
-    pub status: SessionStatus,
-    pub resolution_reason: String,
-    pub debt_at_start: usize,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
@@ -277,25 +346,47 @@ pub enum RecallRating {
     NotRecalled,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub enum SessionStatus {
-    #[default]
-    Planned,
-    Active,
-    Completed,
-    Moved,
-    Replaced,
-    Cancelled,
-}
-
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Retrospective {
     pub text: String,
     pub significant_idea_ids: Vec<String>,
     pub continuing_work: String,
-    pub debt_decision: String,
+    pub unfinished_work_decision: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyCompletionDraft {
+    pub book_id: String,
+    pub step: u8,
+    pub reading_confirmed: bool,
+    pub significant_idea_ids: Vec<String>,
+    pub retrospective: String,
+    pub unfinished_work_decision: String,
+    pub continuing_work: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyMilestone {
+    pub id: String,
+    pub book_id: String,
+    pub kind: MilestoneKind,
+    pub occurred_at: u64,
+    pub page: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum MilestoneKind {
+    ReadingProgress,
+    DraftCaptured,
+    DraftResolved,
+    IdeaFormulated,
+    RecallCompleted,
+    ExperimentAdvanced,
+    StudyCompleted,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
@@ -327,6 +418,12 @@ pub enum LibraryAction {
         context: String,
         comment: String,
     },
+    CaptureDraftSources {
+        book_id: String,
+        section: String,
+        fragments: Vec<SourceFragment>,
+        comment: String,
+    },
     ResolveDraftAsIdea {
         draft_id: String,
         formulation: String,
@@ -346,23 +443,18 @@ pub enum LibraryAction {
     CompleteReading {
         book_id: String,
     },
-    SetStudyRhythm {
-        weekly_session_budget: u8,
+    ArchiveBook {
+        book_id: String,
     },
-    SetDebtReminder {
-        days: u16,
+    RestoreBook {
+        book_id: String,
     },
-    StartSession {
-        session_id: String,
+    StartRepeatStudy {
+        book_id: String,
     },
-    PlanSession {
-        intention: String,
-        planned_at: u64,
-    },
-    ResolveSession {
-        session_id: String,
-        status: SessionStatus,
-        reason: String,
+    UpdateReaderPreferences {
+        book_id: String,
+        preferences: ReaderPreferences,
     },
     UpdateIdea {
         idea_id: String,
@@ -392,6 +484,16 @@ pub enum LibraryAction {
         result: String,
         conclusion: String,
         successful: bool,
+    },
+    AdvanceExperiment {
+        experiment_id: String,
+        status: ExperimentStatus,
+        situation: String,
+        action: String,
+        result: String,
+        conclusion: String,
+        cancellation_reason: String,
+        next_step: String,
     },
     CompleteRecall {
         idea_id: String,
@@ -430,7 +532,10 @@ pub enum LibraryAction {
         retrospective: String,
         significant_idea_ids: Vec<String>,
         continuing_work: String,
-        debt_decision: String,
+        unfinished_work_decision: String,
+    },
+    SaveStudyCompletionDraft {
+        draft: StudyCompletionDraft,
     },
 }
 

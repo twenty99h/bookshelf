@@ -1,16 +1,6 @@
 use super::*;
 
 impl LibraryState {
-    pub fn debt(&self) -> usize {
-        self.drafts.len()
-            + self
-                .experiments
-                .iter()
-                .filter(|item| !item.completed)
-                .count()
-            + self.reviews.iter().filter(|item| item.pending).count()
-    }
-
     #[cfg(test)]
     pub fn apply(&mut self, action: LibraryAction) -> Result<(), DomainError> {
         let timestamp = now();
@@ -51,6 +41,16 @@ impl LibraryState {
                     zoom,
                     scroll: scroll.max(0.0),
                 };
+                if page > book.farthest_page {
+                    book.farthest_page = page;
+                    self.milestones.push(StudyMilestone {
+                        id: make_id("milestone"),
+                        book_id,
+                        kind: MilestoneKind::ReadingProgress,
+                        occurred_at: timestamp,
+                        page: Some(page),
+                    });
+                }
             }
             LibraryAction::SaveOutline { book_id, outline } => {
                 if outline
@@ -111,13 +111,62 @@ impl LibraryState {
                 }
                 self.drafts.push(DraftNote {
                     id: make_id("draft"),
-                    book_id,
+                    book_id: book_id.clone(),
                     section,
                     page,
-                    excerpt,
-                    context,
+                    excerpt: excerpt.clone(),
+                    context: context.clone(),
                     comment,
+                    fragments: vec![SourceFragment {
+                        page,
+                        excerpt: excerpt.clone(),
+                        context: context.clone(),
+                    }],
                     created_at: timestamp,
+                });
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id,
+                    kind: MilestoneKind::DraftCaptured,
+                    occurred_at: timestamp,
+                    page: Some(page),
+                });
+            }
+            LibraryAction::CaptureDraftSources {
+                book_id,
+                section,
+                fragments,
+                comment,
+            } => {
+                find_book(self, &book_id)?;
+                if fragments.is_empty()
+                    || fragments
+                        .iter()
+                        .any(|fragment| fragment.page == 0 || fragment.excerpt.trim().is_empty())
+                {
+                    return Err(DomainError::new(
+                        "draft_source_required",
+                        "Добавьте хотя бы один адресуемый источник",
+                    ));
+                }
+                let first = fragments[0].clone();
+                self.drafts.push(DraftNote {
+                    id: make_id("draft"),
+                    book_id: book_id.clone(),
+                    section,
+                    page: first.page,
+                    excerpt: first.excerpt,
+                    context: first.context,
+                    comment,
+                    fragments,
+                    created_at: timestamp,
+                });
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id,
+                    kind: MilestoneKind::DraftCaptured,
+                    occurred_at: timestamp,
+                    page: Some(first.page),
                 });
             }
             LibraryAction::ResolveDraftAsIdea {
@@ -149,11 +198,15 @@ impl LibraryState {
                     section,
                     formulation: formulation.clone(),
                     assignments,
-                    fragments: vec![SourceFragment {
-                        page: draft.page,
-                        excerpt: draft.excerpt,
-                        context: draft.context,
-                    }],
+                    fragments: if draft.fragments.is_empty() {
+                        vec![SourceFragment {
+                            page: draft.page,
+                            excerpt: draft.excerpt,
+                            context: draft.context,
+                        }]
+                    } else {
+                        draft.fragments
+                    },
                     versions: vec![IdeaVersion {
                         formulation,
                         saved_at: timestamp,
@@ -162,6 +215,17 @@ impl LibraryState {
                 };
                 self.ideas.push(idea);
                 self.drafts.retain(|item| item.id != draft_id);
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id: self
+                        .ideas
+                        .last()
+                        .map(|idea| idea.book_id.clone())
+                        .unwrap_or_default(),
+                    kind: MilestoneKind::IdeaFormulated,
+                    occurred_at: timestamp,
+                    page: None,
+                });
             }
             LibraryAction::AttachDraftToIdea { draft_id, idea_id } => {
                 let draft = self
@@ -173,11 +237,15 @@ impl LibraryState {
                         DomainError::new("draft_not_found", "Черновая заметка не найдена")
                     })?;
                 let idea = find_idea_mut(self, &idea_id)?;
-                idea.fragments.push(SourceFragment {
-                    page: draft.page,
-                    excerpt: draft.excerpt,
-                    context: draft.context,
-                });
+                if draft.fragments.is_empty() {
+                    idea.fragments.push(SourceFragment {
+                        page: draft.page,
+                        excerpt: draft.excerpt,
+                        context: draft.context,
+                    });
+                } else {
+                    idea.fragments.extend(draft.fragments);
+                }
                 self.drafts.retain(|item| item.id != draft_id);
             }
             LibraryAction::DiscardDraft { draft_id } => {
@@ -191,91 +259,79 @@ impl LibraryState {
             }
             LibraryAction::ActivateStudy { book_id } => {
                 find_book(self, &book_id)?;
+                if let Some(active_id) = self.active_study_book_id.clone() {
+                    if active_id != book_id {
+                        find_book_mut(self, &active_id)?.study_status = StudyStatus::Paused;
+                    }
+                }
+                let book = find_book_mut(self, &book_id)?;
+                book.study_status = if book.study_cycles.is_empty() {
+                    StudyStatus::Active
+                } else {
+                    StudyStatus::Repeating
+                };
+                if book.study_cycles.is_empty() {
+                    book.study_cycles.push(StudyCycle {
+                        id: make_id("study-cycle"),
+                        started_at: timestamp,
+                        completed_at: None,
+                        retrospective: None,
+                    });
+                }
                 self.active_study_book_id = Some(book_id);
             }
             LibraryAction::CompleteReading { book_id } => {
-                find_book_mut(self, &book_id)?.reading_completed = true
+                let book = find_book_mut(self, &book_id)?;
+                book.reading_completed = true;
+                book.study_status = StudyStatus::ReadyToComplete;
             }
-            LibraryAction::SetStudyRhythm {
-                weekly_session_budget,
-            } => {
-                if !(1..=14).contains(&weekly_session_budget) {
+            LibraryAction::ArchiveBook { book_id } => {
+                let book = find_book_mut(self, &book_id)?;
+                book.archived = true;
+                book.study_status = StudyStatus::Archived;
+                if self.active_study_book_id.as_deref() == Some(book_id.as_str()) {
+                    self.active_study_book_id = None;
+                }
+            }
+            LibraryAction::RestoreBook { book_id } => {
+                let book = find_book_mut(self, &book_id)?;
+                book.archived = false;
+                book.study_status = if book.study_completed {
+                    StudyStatus::Completed
+                } else {
+                    StudyStatus::Paused
+                };
+            }
+            LibraryAction::StartRepeatStudy { book_id } => {
+                let book = find_book_mut(self, &book_id)?;
+                if !book.study_completed {
                     return Err(DomainError::new(
-                        "study_rhythm_invalid",
-                        "Выберите от 1 до 14 сеансов в неделю",
+                        "repeat_study_requires_completion",
+                        "Повторное изучение доступно после завершённого цикла",
                     ));
                 }
-                self.weekly_session_budget = weekly_session_budget;
-            }
-            LibraryAction::SetDebtReminder { days } => {
-                if !(1..=90).contains(&days) {
-                    return Err(DomainError::new(
-                        "debt_reminder_invalid",
-                        "Выберите период от 1 до 90 дней",
-                    ));
-                }
-                self.debt_reminder_days = days;
-                self.debt_notification_sent_at = None;
-            }
-            LibraryAction::PlanSession {
-                intention,
-                planned_at,
-            } => {
-                if intention.trim().is_empty() {
-                    return Err(DomainError::new(
-                        "session_intention_required",
-                        "Опишите намерение сеанса",
-                    ));
-                }
-                self.sessions.push(StudySession {
-                    id: make_id("session"),
-                    intention,
-                    planned_at,
-                    status: SessionStatus::Planned,
-                    resolution_reason: String::new(),
-                    debt_at_start: 0,
+                book.study_completed = false;
+                book.reading_completed = false;
+                book.study_status = StudyStatus::Repeating;
+                book.study_cycles.push(StudyCycle {
+                    id: make_id("study-cycle"),
+                    started_at: timestamp,
+                    completed_at: None,
+                    retrospective: None,
                 });
+                self.active_study_book_id = Some(book_id);
             }
-            LibraryAction::StartSession { session_id } => {
-                let debt_at_start = self.debt();
-                let session = self
-                    .sessions
-                    .iter_mut()
-                    .find(|item| item.id == session_id)
-                    .ok_or_else(|| DomainError::new("session_not_found", "Сеанс не найден"))?;
-                if session.status != SessionStatus::Planned {
-                    return Err(DomainError::new(
-                        "session_already_started",
-                        "Этот сеанс уже начат или завершён",
-                    ));
-                }
-                session.status = SessionStatus::Active;
-                session.debt_at_start = debt_at_start;
-            }
-            LibraryAction::ResolveSession {
-                session_id,
-                status,
-                reason,
+            LibraryAction::UpdateReaderPreferences {
+                book_id,
+                preferences,
             } => {
-                if status != SessionStatus::Completed && reason.trim().is_empty() {
+                if !(320..=560).contains(&preferences.sidebar_width) {
                     return Err(DomainError::new(
-                        "session_reason_required",
-                        "Укажите причину решения",
+                        "reader_sidebar_width_invalid",
+                        "Ширина панели должна быть от 320 до 560 пикселей",
                     ));
                 }
-                let session = self
-                    .sessions
-                    .iter_mut()
-                    .find(|item| item.id == session_id)
-                    .ok_or_else(|| DomainError::new("session_not_found", "Сеанс не найден"))?;
-                if status == SessionStatus::Completed && session.status != SessionStatus::Active {
-                    return Err(DomainError::new(
-                        "session_not_started",
-                        "Сначала начните сеанс, чтобы измерить изменение долга",
-                    ));
-                }
-                session.status = status;
-                session.resolution_reason = reason;
+                find_book_mut(self, &book_id)?.reader = preferences;
             }
             LibraryAction::UpdateIdea {
                 idea_id,
@@ -362,7 +418,7 @@ impl LibraryState {
                 conclusion,
                 successful,
             } => {
-                find_idea(self, &idea_id)?;
+                let book_id = find_idea(self, &idea_id)?.book_id.clone();
                 if [
                     situation.as_str(),
                     action.as_str(),
@@ -386,6 +442,77 @@ impl LibraryState {
                     conclusion,
                     successful,
                     completed: true,
+                    status: ExperimentStatus::Completed,
+                    cancellation_reason: String::new(),
+                    next_step: String::new(),
+                });
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id,
+                    kind: MilestoneKind::ExperimentAdvanced,
+                    occurred_at: timestamp,
+                    page: None,
+                });
+            }
+            LibraryAction::AdvanceExperiment {
+                experiment_id,
+                status,
+                situation,
+                action,
+                result,
+                conclusion,
+                cancellation_reason,
+                next_step,
+            } => {
+                if status == ExperimentStatus::Cancelled && cancellation_reason.trim().is_empty() {
+                    return Err(DomainError::new(
+                        "experiment_cancellation_reason_required",
+                        "Укажите причину отмены замысла",
+                    ));
+                }
+                if status == ExperimentStatus::Completed
+                    && [
+                        situation.as_str(),
+                        action.as_str(),
+                        result.as_str(),
+                        conclusion.as_str(),
+                    ]
+                    .iter()
+                    .any(|value| value.trim().is_empty())
+                {
+                    return Err(DomainError::new(
+                        "experiment_fields_required",
+                        "Для завершения нужны ситуация, действие, наблюдаемый результат и вывод",
+                    ));
+                }
+                let idea_id = {
+                    let experiment = self
+                        .experiments
+                        .iter_mut()
+                        .find(|item| item.id == experiment_id)
+                        .ok_or_else(|| {
+                            DomainError::new("experiment_not_found", "Эксперимент не найден")
+                        })?;
+                    experiment.status = status;
+                    experiment.situation = situation;
+                    experiment.action = action;
+                    experiment.result = result;
+                    experiment.conclusion = conclusion;
+                    experiment.cancellation_reason = cancellation_reason;
+                    experiment.next_step = next_step;
+                    experiment.completed = matches!(
+                        status,
+                        ExperimentStatus::Completed | ExperimentStatus::Cancelled
+                    );
+                    experiment.idea_id.clone()
+                };
+                let book_id = find_idea(self, &idea_id)?.book_id.clone();
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id,
+                    kind: MilestoneKind::ExperimentAdvanced,
+                    occurred_at: timestamp,
+                    page: None,
                 });
             }
             LibraryAction::CompleteRecall {
@@ -394,7 +521,7 @@ impl LibraryState {
                 rating,
                 next_at,
             } => {
-                find_idea(self, &idea_id)?;
+                let book_id = find_idea(self, &idea_id)?.book_id.clone();
                 if answer.trim().is_empty() {
                     return Err(DomainError::new(
                         "recall_invalid",
@@ -412,6 +539,13 @@ impl LibraryState {
                     answer,
                     rating,
                     next_at: next_at.unwrap_or_else(|| timestamp + suggested_days * 86_400),
+                });
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id,
+                    kind: MilestoneKind::RecallCompleted,
+                    occurred_at: timestamp,
+                    page: None,
                 });
             }
             LibraryAction::RescheduleRecall { recall_id, next_at } => {
@@ -540,16 +674,16 @@ impl LibraryState {
                 retrospective,
                 significant_idea_ids,
                 continuing_work,
-                debt_decision,
+                unfinished_work_decision,
             } => {
                 find_book(self, &book_id)?;
                 if retrospective.trim().is_empty()
                     || !(3..=7).contains(&significant_idea_ids.len())
-                    || debt_decision.trim().is_empty()
+                    || unfinished_work_decision.trim().is_empty()
                 {
                     return Err(DomainError::new(
                         "retrospective_required",
-                        "Добавьте ретроспективу, 3–7 значимых идей и решение по долгу",
+                        "Добавьте ретроспективу, 3–7 значимых идей и решение по незавершённой работе",
                     ));
                 }
                 if significant_idea_ids.iter().any(|id| {
@@ -565,15 +699,42 @@ impl LibraryState {
                 }
                 let book = find_book_mut(self, &book_id)?;
                 book.study_completed = true;
-                book.retrospective = Some(Retrospective {
+                book.study_status = StudyStatus::Completed;
+                let completed_retrospective = Retrospective {
                     text: retrospective,
                     significant_idea_ids,
                     continuing_work,
-                    debt_decision,
-                });
+                    unfinished_work_decision,
+                };
+                book.retrospective = Some(completed_retrospective.clone());
+                if let Some(cycle) = book.study_cycles.last_mut() {
+                    cycle.completed_at = Some(timestamp);
+                    cycle.retrospective = Some(completed_retrospective);
+                }
                 if self.active_study_book_id.as_deref() == Some(book_id.as_str()) {
                     self.active_study_book_id = None;
                 }
+                self.completion_drafts
+                    .retain(|draft| draft.book_id != book_id);
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id,
+                    kind: MilestoneKind::StudyCompleted,
+                    occurred_at: timestamp,
+                    page: None,
+                });
+            }
+            LibraryAction::SaveStudyCompletionDraft { draft } => {
+                find_book(self, &draft.book_id)?;
+                if !(1..=6).contains(&draft.step) {
+                    return Err(DomainError::new(
+                        "completion_step_invalid",
+                        "Шаг завершения должен быть от 1 до 6",
+                    ));
+                }
+                self.completion_drafts
+                    .retain(|existing| existing.book_id != draft.book_id);
+                self.completion_drafts.push(draft);
             }
         }
         Ok(())

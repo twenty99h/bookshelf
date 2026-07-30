@@ -1,4 +1,4 @@
-use crate::domain::{new_id, now, Book, DomainError, LibraryAction, LibraryState, SessionStatus};
+use crate::domain::{new_id, now, Book, DomainError, LibraryAction, LibraryState};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -17,6 +17,7 @@ pub(crate) struct SearchResult {
 #[ts(export)]
 pub(crate) enum SearchResultKind {
     Book,
+    Draft,
     Idea,
     Topic,
     Material,
@@ -26,6 +27,7 @@ impl SearchResultKind {
     pub(crate) fn from_database(value: &str) -> Option<Self> {
         match value {
             "book" => Some(Self::Book),
+            "draft" => Some(Self::Draft),
             "idea" => Some(Self::Idea),
             "topic" => Some(Self::Topic),
             "material" => Some(Self::Material),
@@ -69,6 +71,14 @@ pub(crate) fn import_pdf(
     let book = port.store_pdf(path, title, ids.next_id("book"))?;
     let stored_file = book.stored_file.clone();
     let mut state = repository.load()?;
+    if state
+        .books
+        .iter()
+        .any(|existing| !book.content_hash.is_empty() && existing.content_hash == book.content_hash)
+    {
+        let _ = port.remove_pdf(&stored_file);
+        return Ok(state);
+    }
     state.books.push(book);
     if let Err(error) = repository.commit(&state) {
         let _ = port.remove_pdf(&stored_file);
@@ -232,25 +242,9 @@ pub(crate) fn execute_library_action(
     action: LibraryAction,
 ) -> Result<LibraryState, ApplicationError> {
     let mut state = repository.load()?;
-    let previous_debt = state.debt() as i32;
-    let session_debt_baseline = match &action {
-        LibraryAction::ResolveSession {
-            session_id, status, ..
-        } if *status == SessionStatus::Completed => state
-            .sessions
-            .iter()
-            .find(|session| &session.id == session_id)
-            .map(|session| session.debt_at_start as i32),
-        _ => None,
-    };
     let timestamp = clock.now();
     let mut make_id = |prefix: &str| ids.next_id(prefix);
     state.apply_with(action, timestamp, &mut make_id)?;
-    state.last_debt_change = state.debt() as i32 - session_debt_baseline.unwrap_or(previous_debt);
-    if state.last_debt_change != 0 {
-        state.last_debt_changed_at = timestamp;
-        state.debt_notification_sent_at = None;
-    }
     repository.commit(&state)?;
     Ok(state)
 }
@@ -339,6 +333,7 @@ mod tests {
                 reading_completed: false,
                 study_completed: false,
                 retrospective: None,
+                ..Book::default()
             }],
             ..LibraryState::default()
         }));

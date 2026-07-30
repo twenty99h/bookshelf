@@ -188,26 +188,6 @@ impl Library {
         }
     }
 
-    pub fn claim_debt_notification(&self) -> Result<Option<usize>, LibraryError> {
-        let mut state = self.load()?;
-        let quiet_period_seconds = u64::from(if state.debt_reminder_days == 0 {
-            7
-        } else {
-            state.debt_reminder_days
-        }) * 86_400;
-        let due = state.debt() > 0
-            && state.last_debt_changed_at > 0
-            && now().saturating_sub(state.last_debt_changed_at) >= quiet_period_seconds
-            && state.debt_notification_sent_at.is_none();
-        if !due {
-            return Ok(None);
-        }
-        let debt = state.debt();
-        state.debt_notification_sent_at = Some(now());
-        self.replace_state(&state)?;
-        Ok(Some(debt))
-    }
-
     fn create_snapshot(&self, state: &LibraryState) -> io::Result<()> {
         let dir = self.data_dir.join("snapshots");
         let path = dir.join(format!("snapshot-{}.json", unique_number()));
@@ -260,6 +240,14 @@ impl Library {
                 .collect::<Vec<_>>()
                 .join(" · ");
             transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'topic', ?2, ?3)", params![topic.id, topic.name, context]).map_err(sqlite_io)?;
+        }
+        for draft in &state.drafts {
+            let book = book_title(state, &draft.book_id);
+            let context = format!(
+                "{book} · {} · стр. {} · {}",
+                draft.section, draft.page, draft.comment
+            );
+            transaction.execute("INSERT INTO search_index (entity_id, kind, title, context) VALUES (?1, 'draft', ?2, ?3)", params![draft.id, draft.excerpt, context]).map_err(sqlite_io)?;
         }
         for material in &state.materials {
             let context = [

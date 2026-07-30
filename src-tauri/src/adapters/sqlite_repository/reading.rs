@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 
 impl Library {
     pub(super) fn store_pdf(
@@ -22,13 +23,8 @@ impl Library {
                     })
                 })
         });
-        if !has_text_layer {
-            return Err(DomainError::new(
-                "pdf_text_layer_missing",
-                "В PDF нет пригодного текстового слоя. OCR пока не поддерживается",
-            )
-            .into());
-        }
+        let page_count = document.get_pages().len() as u32;
+        let content_hash = format!("{:x}", Sha256::digest(&bytes));
         let title = if title.trim().is_empty() {
             source
                 .as_ref()
@@ -49,6 +45,9 @@ impl Library {
             title,
             stored_file: relative,
             has_text_layer,
+            page_count,
+            content_hash,
+            farthest_page: 1,
             ..Book::default()
         })
     }

@@ -1,21 +1,34 @@
 @import "tailwindcss";
+@import "@fontsource-variable/ibm-plex-sans";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 
 @theme {
-  --color-paper: #f7f5ee;
-  --color-paper-raised: #fffefa;
-  --color-ink: #18212b;
-  --color-ink-muted: #69727b;
-  --color-rule: #d9d8d0;
-  --color-spine: #18212b;
-  --color-spine-raised: #2b3742;
-  --color-spine-muted: #c8ced3;
-  --color-leaf: #53672b;
-  --color-leaf-soft: #edf3d5;
-  --color-focus: #d9e79d;
-  --color-success: #537038;
-  --color-danger: #9b3731;
-  --font-display: Georgia, Cambria, "Times New Roman", serif;
-  --font-body: Inter, ui-sans-serif, system-ui, sans-serif;
+  --color-night: #0d1117;
+  --color-graphite: #141a22;
+  --color-slate: #1c2430;
+  --color-mist: #e8edf3;
+  --color-mist-dim: #aab4c1;
+  --color-mist-faint: #94a0af;
+  --color-iris: #aaa8ff;
+  --color-iris-strong: #5752bd;
+  --color-amber: #d6a24a;
+  --color-paper: #141a22;
+  --color-paper-raised: #1c2430;
+  --color-ink: #e8edf3;
+  --color-ink-muted: #aab4c1;
+  --color-rule: #354050;
+  --color-spine: #0d1117;
+  --color-spine-raised: #273242;
+  --color-spine-muted: #aab4c1;
+  --color-leaf: #5752bd;
+  --color-leaf-soft: #2a2d4d;
+  --color-focus: #aaa8ff;
+  --color-success: #6fbd8b;
+  --color-danger: #df7872;
+  --font-display: "IBM Plex Sans Variable", "IBM Plex Sans", sans-serif;
+  --font-body: "IBM Plex Sans Variable", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --shadow-paper: 0 5px 18px rgba(34, 38, 31, 0.04);
 }
 
@@ -26,9 +39,12 @@
   body {
     margin: 0;
     min-width: 320px;
-    background: var(--color-paper);
-    color: var(--color-ink);
+    background: var(--color-night);
+    color: var(--color-mist);
     font-family: var(--font-body);
+  }
+  :focus-visible {
+    outline-color: var(--color-iris);
   }
   button,
   input,

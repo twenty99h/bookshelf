@@ -30,11 +30,11 @@
 </script>
 
 <div class="grid gap-1.5">
-  <Label.Root id={labelId} class="text-xs font-bold text-slate-600">{label}</Label.Root>
+  <Label.Root id={labelId} class="text-xs font-bold text-mist-dim">{label}</Label.Root>
   <Select.Root type="single" items={options} bind:value={() => value, setValue} {disabled}>
     <Select.Trigger
       aria-labelledby={labelId}
-      class="flex min-h-11 w-full items-center gap-2 rounded-lg border border-slate-300 bg-paper-raised px-3 py-2.5 text-left text-ink outline-none focus-visible:border-leaf focus-visible:ring-3 focus-visible:ring-focus disabled:opacity-50"
+      class="flex min-h-11 w-full items-center gap-2 rounded-lg border border-white/15 bg-night/45 px-3 py-2.5 text-left text-ink outline-none focus-visible:border-iris focus-visible:ring-3 focus-visible:ring-focus disabled:opacity-50"
     >
       <Select.Value {placeholder} />
       <ChevronDown class="ml-auto size-4" aria-hidden="true" />

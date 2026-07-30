@@ -6,8 +6,9 @@ import type { Idea } from "./Idea";
 import type { IdeaLink } from "./IdeaLink";
 import type { IdeaReview } from "./IdeaReview";
 import type { Recall } from "./Recall";
-import type { StudySession } from "./StudySession";
+import type { StudyCompletionDraft } from "./StudyCompletionDraft";
+import type { StudyMilestone } from "./StudyMilestone";
 import type { Topic } from "./Topic";
 import type { TransferMaterial } from "./TransferMaterial";
 
-export type LibraryState = { books: Array<Book>, drafts: Array<DraftNote>, ideas: Array<Idea>, topics: Array<Topic>, ideaLinks: Array<IdeaLink>, experiments: Array<Experiment>, recalls: Array<Recall>, sessions: Array<StudySession>, materials: Array<TransferMaterial>, reviews: Array<IdeaReview>, workspaceNote: string, activeStudyBookId: string | null, weeklySessionBudget: number, lastDebtChange: number, lastDebtChangedAt: number, debtNotificationSentAt: number | null, debtReminderDays: number, };
+export type LibraryState = { books: Array<Book>, drafts: Array<DraftNote>, ideas: Array<Idea>, topics: Array<Topic>, ideaLinks: Array<IdeaLink>, experiments: Array<Experiment>, recalls: Array<Recall>, materials: Array<TransferMaterial>, reviews: Array<IdeaReview>, milestones: Array<StudyMilestone>, completionDrafts: Array<StudyCompletionDraft>, workspaceNote: string, activeStudyBookId: string | null, };

@@ -245,7 +245,7 @@ fn study_completion_requires_a_retrospective_and_three_to_seven_ideas() {
         retrospective: "".into(),
         significant_idea_ids: vec![],
         continuing_work: "".into(),
-        debt_decision: "".into(),
+        unfinished_work_decision: "".into(),
     });
     assert_eq!(result.unwrap_err().code(), "retrospective_required");
     assert_eq!(state.active_study_book_id.as_deref(), Some("book"));
@@ -421,56 +421,6 @@ fn deferred_review_kinds_do_not_replace_each_other() {
 }
 
 #[test]
-fn completing_a_session_reports_debt_change_since_it_started() {
-    let data_dir = test_data_dir();
-    let library = Library::open(&data_dir).unwrap();
-    let mut state = LibraryState::default();
-    state.books.push(Book::for_test("book", "Книга"));
-    library.replace_state(&state).unwrap();
-    let planned = library
-        .apply(LibraryAction::PlanSession {
-            intention: "Продолжить чтение".into(),
-            planned_at: 10,
-        })
-        .unwrap();
-    let session_id = planned.sessions[0].id.clone();
-    library
-        .apply(LibraryAction::CaptureDraft {
-            book_id: "book".into(),
-            section: "Глава".into(),
-            page: 1,
-            excerpt: "Фрагмент".into(),
-            context: "".into(),
-            comment: "".into(),
-        })
-        .unwrap();
-    library
-        .apply(LibraryAction::StartSession {
-            session_id: session_id.clone(),
-        })
-        .unwrap();
-    library
-        .apply(LibraryAction::CaptureDraft {
-            book_id: "book".into(),
-            section: "Глава".into(),
-            page: 2,
-            excerpt: "Второй фрагмент".into(),
-            context: "".into(),
-            comment: "".into(),
-        })
-        .unwrap();
-    let completed = library
-        .apply(LibraryAction::ResolveSession {
-            session_id,
-            status: SessionStatus::Completed,
-            reason: "".into(),
-        })
-        .unwrap();
-    assert_eq!(completed.last_debt_change, 1);
-    fs::remove_dir_all(data_dir).unwrap();
-}
-
-#[test]
 fn reading_position_and_corrected_outline_survive_reopening() {
     let data_dir = test_data_dir();
     let library = Library::open(&data_dir).unwrap();
@@ -510,7 +460,7 @@ fn reading_position_and_corrected_outline_survive_reopening() {
 }
 
 #[test]
-fn pdf_import_corpus_covers_text_variants_and_rejects_scanned_input() {
+fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
     let data_dir = test_data_dir();
     let library = Library::open(&data_dir).unwrap();
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf");
@@ -547,32 +497,28 @@ fn pdf_import_corpus_covers_text_variants_and_rejects_scanned_input() {
     assert!(state.books.last().unwrap().has_text_layer);
 
     let scanned = corpus.join("image-only.pdf");
-    let error = crate::application::import_pdf(
+    let state = crate::application::import_pdf(
         &library.reading_storage(),
         &library,
         &SystemIdGenerator,
         scanned.to_string_lossy().into_owned(),
         "Скан".into(),
     )
-    .unwrap_err();
-    assert!(
-        matches!(error, ApplicationError::Domain(ref error) if error.code() == "pdf_text_layer_missing")
-    );
-    fs::remove_dir_all(data_dir).unwrap();
-}
+    .unwrap();
+    let scanned_book = state.books.last().unwrap();
+    assert!(!scanned_book.has_text_layer);
+    assert!(!scanned_book.content_hash.is_empty());
 
-#[test]
-fn unchanged_debt_produces_only_one_notification_after_the_configured_period() {
-    let data_dir = test_data_dir();
-    let library = Library::open(&data_dir).unwrap();
-    let mut state = LibraryState::default();
-    state.books.push(Book::for_test("book", "Книга"));
-    state.drafts.push(DraftNote::for_test("draft", "book"));
-    state.debt_reminder_days = 3;
-    state.last_debt_changed_at = now() - 4 * 86_400;
-    library.replace_state(&state).unwrap();
-    assert_eq!(library.claim_debt_notification().unwrap(), Some(1));
-    assert_eq!(library.claim_debt_notification().unwrap(), None);
+    let before_duplicate = state.books.len();
+    let state = crate::application::import_pdf(
+        &library.reading_storage(),
+        &library,
+        &SystemIdGenerator,
+        scanned.to_string_lossy().into_owned(),
+        "Повторный скан".into(),
+    )
+    .unwrap();
+    assert_eq!(state.books.len(), before_duplicate);
     fs::remove_dir_all(data_dir).unwrap();
 }
 
@@ -711,6 +657,7 @@ fn large_atomic_snapshot_round_trip_reports_size_and_elapsed_time() {
             reading_completed: index % 2 == 0,
             study_completed: false,
             retrospective: None,
+            ..Book::default()
         });
         state.drafts.push(DraftNote {
             id: format!("draft-{index}"),
@@ -720,6 +667,11 @@ fn large_atomic_snapshot_round_trip_reports_size_and_elapsed_time() {
             excerpt: "Репрезентативный фрагмент книги".into(),
             context: "Контекст для полнотекстового поиска".into(),
             comment: "Авторская мысль".into(),
+            fragments: vec![SourceFragment {
+                page: index + 1,
+                excerpt: "Репрезентативный фрагмент книги".into(),
+                context: "Контекст для полнотекстового поиска".into(),
+            }],
             created_at: 1_700_000_000 + u64::from(index),
         });
         state.ideas.push(Idea {
@@ -752,6 +704,9 @@ fn large_atomic_snapshot_round_trip_reports_size_and_elapsed_time() {
             conclusion: "Авторский вывод".into(),
             successful: index % 2 == 0,
             completed: true,
+            status: ExperimentStatus::Completed,
+            cancellation_reason: String::new(),
+            next_step: String::new(),
         });
         state.recalls.push(Recall {
             id: format!("recall-{index}"),
@@ -759,14 +714,6 @@ fn large_atomic_snapshot_round_trip_reports_size_and_elapsed_time() {
             answer: "Ответ своими словами".into(),
             rating: RecallRating::Partial,
             next_at: 1_700_604_800,
-        });
-        state.sessions.push(StudySession {
-            id: format!("session-{index}"),
-            intention: "Продолжить изучение".into(),
-            planned_at: 1_700_000_000,
-            status: SessionStatus::Completed,
-            resolution_reason: String::new(),
-            debt_at_start: 2,
         });
         state.materials.push(TransferMaterial {
             id: format!("material-{index}"),
@@ -803,4 +750,150 @@ fn large_atomic_snapshot_round_trip_reports_size_and_elapsed_time() {
         elapsed
     );
     fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
+fn activating_another_book_pauses_the_previous_study_atomically() {
+    let mut state = LibraryState::default();
+    state.books.push(Book::for_test("first", "Первая"));
+    state.books.push(Book::for_test("second", "Вторая"));
+
+    state
+        .apply(LibraryAction::ActivateStudy {
+            book_id: "first".into(),
+        })
+        .unwrap();
+    state
+        .apply(LibraryAction::ActivateStudy {
+            book_id: "second".into(),
+        })
+        .unwrap();
+
+    assert_eq!(state.active_study_book_id.as_deref(), Some("second"));
+    assert_eq!(
+        find_book(&state, "first").unwrap().study_status,
+        StudyStatus::Paused
+    );
+    assert_eq!(
+        find_book(&state, "second").unwrap().study_status,
+        StudyStatus::Active
+    );
+}
+
+#[test]
+fn returning_to_an_earlier_page_does_not_reduce_farthest_reading_progress() {
+    let mut state = LibraryState::default();
+    state.books.push(Book::for_test("book", "Книга"));
+
+    for page in [42, 18] {
+        state
+            .apply(LibraryAction::UpdateReading {
+                book_id: "book".into(),
+                page,
+                zoom: 1.0,
+                scroll: 0.0,
+            })
+            .unwrap();
+    }
+
+    let book = find_book(&state, "book").unwrap();
+    assert_eq!(book.reading.page, 18);
+    assert_eq!(book.farthest_page, 42);
+    assert_eq!(
+        state
+            .milestones
+            .iter()
+            .filter(|milestone| milestone.kind == MilestoneKind::ReadingProgress)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn one_draft_preserves_each_page_of_a_multi_page_source() {
+    let mut state = LibraryState::default();
+    state.books.push(Book::for_test("book", "Книга"));
+    state
+        .apply(LibraryAction::CaptureDraftSources {
+            book_id: "book".into(),
+            section: "Глава".into(),
+            fragments: vec![
+                SourceFragment {
+                    page: 10,
+                    excerpt: "Начало мысли".into(),
+                    context: "".into(),
+                },
+                SourceFragment {
+                    page: 11,
+                    excerpt: "Продолжение мысли".into(),
+                    context: "".into(),
+                },
+            ],
+            comment: "Проверить границу".into(),
+        })
+        .unwrap();
+
+    assert_eq!(state.drafts.len(), 1);
+    assert_eq!(state.drafts[0].fragments.len(), 2);
+    assert_eq!(state.drafts[0].fragments[1].page, 11);
+}
+
+#[test]
+fn cancelling_an_experiment_requires_a_reason_and_is_not_a_failure() {
+    let mut state = LibraryState::default();
+    state.ideas.push(Idea::for_test("idea", "book"));
+    state.experiments.push(Experiment {
+        id: "experiment".into(),
+        idea_id: "idea".into(),
+        ..Experiment::default()
+    });
+    let result = state.apply(LibraryAction::AdvanceExperiment {
+        experiment_id: "experiment".into(),
+        status: ExperimentStatus::Cancelled,
+        situation: "".into(),
+        action: "".into(),
+        result: "".into(),
+        conclusion: "".into(),
+        cancellation_reason: "".into(),
+        next_step: "".into(),
+    });
+    assert_eq!(
+        result.unwrap_err().code(),
+        "experiment_cancellation_reason_required"
+    );
+
+    state
+        .apply(LibraryAction::AdvanceExperiment {
+            experiment_id: "experiment".into(),
+            status: ExperimentStatus::Cancelled,
+            situation: "".into(),
+            action: "".into(),
+            result: "".into(),
+            conclusion: "".into(),
+            cancellation_reason: "Контекст исчез".into(),
+            next_step: "".into(),
+        })
+        .unwrap();
+    assert_eq!(state.experiments[0].status, ExperimentStatus::Cancelled);
+    assert!(state.experiments[0].completed);
+}
+
+#[test]
+fn completion_draft_replaces_the_previous_step_for_the_same_book() {
+    let mut state = LibraryState::default();
+    state.books.push(Book::for_test("book", "Книга"));
+    for step in [2, 3] {
+        state
+            .apply(LibraryAction::SaveStudyCompletionDraft {
+                draft: StudyCompletionDraft {
+                    book_id: "book".into(),
+                    step,
+                    retrospective: format!("Черновик шага {step}"),
+                    ..StudyCompletionDraft::default()
+                },
+            })
+            .unwrap();
+    }
+    assert_eq!(state.completion_drafts.len(), 1);
+    assert_eq!(state.completion_drafts[0].step, 3);
 }
