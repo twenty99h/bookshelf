@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Idea, ReviewKind } from "@/shared/api";
-  import { Button, Eyebrow, Surface } from "@/shared/ui";
+  import { Button, Eyebrow, SelectField, Surface, TextArea, TextField } from "@/shared/ui";
 
   let {
     kind,
@@ -66,13 +66,7 @@
   {#if error}<p role="alert">{error}. Пакет можно скопировать во внешний чат; остальные функции доступны.</p>{/if}
   {#if response && !running}
     {#if kind === "topicSuggestion"}
-      <label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for="proposed-topic"
-        >Подтверждаемое название темы</label
-      ><input
-        class="w-full rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5 focus:border-leaf focus:outline-none focus:ring-3 focus:ring-focus"
-        id="proposed-topic"
-        bind:value={proposedTopic}
-      />
+      <TextField id="proposed-topic" label="Подтверждаемое название темы" bind:value={proposedTopic} />
       <div class="mt-2.5 flex flex-wrap gap-2">
         <Button disabled={!proposedTopic.trim()} onclick={onConfirmTopic}>Подтвердить тему</Button><Button
           onclick={onReject}>Отклонить</Button
@@ -80,36 +74,30 @@
       </div>
     {:else if kind === "linkSuggestion"}
       <p>Ответ выше — один кандидат. Он ничего не меняет, пока вы не выберете точную идею и связь.</p>
-      <label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for="suggested-link-idea">Связанная идея</label>
-      <select
-        class="w-full rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5"
-        id="suggested-link-idea"
+      <SelectField
+        label="Связанная идея"
         bind:value={linkIdeaId}
-        ><option value="">Выберите идею из кандидата</option
-        ><!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 14): key legacy Codex candidate options in the Codex slice. -->
-        {#each linkIdeas as idea}<option value={idea.id}>{idea.formulation}</option>{/each}</select
-      >
-      <label class="mb-1.5 mt-3 block text-xs font-bold text-[#4d5861]" for="suggested-link-relation">Тип связи</label>
-      <select
-        class="w-full rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5"
-        id="suggested-link-relation"
-        bind:value={linkRelation}
-        ><option value="complements">Дополняет</option><option value="clarifies">Уточняет</option><option
-          value="contradicts">Противоречит</option
-        ></select
-      >
+        placeholder="Выберите идею из кандидата"
+        options={linkIdeas.map((idea) => ({ value: idea.id, label: idea.formulation }))}
+      />
+      <div class="mt-3">
+        <SelectField
+          label="Тип связи"
+          bind:value={linkRelation}
+          options={[
+            { value: "complements", label: "Дополняет" },
+            { value: "clarifies", label: "Уточняет" },
+            { value: "contradicts", label: "Противоречит" },
+          ]}
+        />
+      </div>
       <div class="mt-2.5 flex flex-wrap gap-2">
         <Button disabled={!linkIdeaId} onclick={onConfirmLink}>Подтвердить этого кандидата</Button><Button
           onclick={onReject}>Отклонить</Button
         >
       </div>
     {:else}
-      <label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for="review-conclusion"
-        >Мой вывод (необязательно)</label
-      ><textarea
-        class="min-h-20 w-full resize-y rounded-lg border border-[#cfd1cd] bg-paper-raised px-3 py-2.5 focus:border-leaf focus:outline-none focus:ring-3 focus:ring-focus"
-        id="review-conclusion"
-        bind:value={conclusion}></textarea>
+      <TextArea id="review-conclusion" label="Мой вывод (необязательно)" bind:value={conclusion} />
       <div class="mt-2.5 flex flex-wrap gap-2">
         <Button disabled={!authoredFormulation.trim()} onclick={onRefine}>Уточнить своей формулировкой</Button><Button
           onclick={onUnchanged}>Оставить без изменений</Button

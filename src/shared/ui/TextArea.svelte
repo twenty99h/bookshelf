@@ -2,13 +2,15 @@
   let {
     id,
     label,
+    ariaLabel,
     value = $bindable(""),
     placeholder = "",
     disabled = false,
     required = false,
   }: {
     id: string;
-    label: string;
+    label?: string;
+    ariaLabel?: string;
     value?: string;
     placeholder?: string;
     disabled?: boolean;
@@ -16,9 +18,10 @@
   } = $props();
 </script>
 
-<label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for={id}>{label}</label>
+{#if label}<label class="mb-1.5 block text-xs font-bold text-[#4d5861]" for={id}>{label}</label>{/if}
 <textarea
   {id}
+  aria-label={ariaLabel}
   bind:value
   {placeholder}
   {disabled}

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Button } from "@/shared/ui";
+  import { ZoomIn, ZoomOut } from "@lucide/svelte";
+  import { Button, IconButton, NumberField, SelectField } from "@/shared/ui";
   import type { PDFDocumentProxy } from "pdfjs-dist";
   import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
   import "pdfjs-dist/web/pdf_viewer.css";
+  import { destroyPdf, renderPdfPage as renderPageLayer, selectedPdfText } from "../lib/pdf-renderer";
 
   let {
     url,
@@ -41,7 +43,10 @@
   onMount(() => {
     void initialize();
     globalThis.document.addEventListener("selectionchange", selectText);
-    return () => globalThis.document.removeEventListener("selectionchange", selectText);
+    return () => {
+      globalThis.document.removeEventListener("selectionchange", selectText);
+      void destroyPdf(pdfDocument, textLayerContainer);
+    };
   });
 
   async function initialize() {
@@ -98,21 +103,7 @@
     rendering = true;
     pending = false;
     try {
-      const pdfPage = await pdfDocument.getPage(page);
-      const viewport = pdfPage.getViewport({ scale: zoom });
-      const ratio = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(viewport.width * ratio);
-      canvas.height = Math.floor(viewport.height * ratio);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      // eslint-disable-next-line svelte/no-dom-manipulating -- TODO(ticket 09): PDF.js owns this dynamic text layer until the reading integration seam is isolated.
-      textLayerContainer.replaceChildren();
-      textLayerContainer.style.width = `${viewport.width}px`;
-      textLayerContainer.style.height = `${viewport.height}px`;
-      await pdfPage.render({ canvas, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0] })
-        .promise;
-      const text = await pdfPage.getTextContent();
-      await new pdfjs.TextLayer({ textContentSource: text, container: textLayerContainer, viewport }).render();
+      await renderPageLayer(pdfjs, pdfDocument, page, zoom, canvas, textLayerContainer);
     } finally {
       rendering = false;
       if (pending) await renderPage();
@@ -131,49 +122,47 @@
     onPosition(page, zoom, scrollContainer.scrollTop);
   }
   function selectText() {
-    const selection = window.getSelection();
-    const excerpt = selection?.toString().trim() ?? "";
-    if (!excerpt || !selection?.anchorNode || !textLayerContainer.contains(selection.anchorNode)) return;
-    const context = textLayerContainer.textContent?.replace(/\s+/g, " ").trim() ?? "";
-    onSelection(
-      excerpt,
-      context.slice(Math.max(0, context.indexOf(excerpt) - 180), context.indexOf(excerpt) + excerpt.length + 180),
-    );
+    const selected = selectedPdfText(textLayerContainer);
+    if (selected) onSelection(selected.excerpt, selected.context);
   }
 </script>
 
-<section class="pdf-viewer" aria-label="Встроенный PDF.js просмотрщик">
-  <div class="pdf-toolbar">
-    <Button disabled={page <= 1} onclick={() => go(page - 1)}>Предыдущая</Button><label
-      >Страница <input
-        aria-label="Текущая страница"
-        type="number"
-        min="1"
-        max={pageCount}
-        bind:value={page}
-        onchange={() => go(page)}
-      />
-      из {pageCount}</label
-    ><Button disabled={page >= pageCount} onclick={() => go(page + 1)}>Следующая</Button><Button
-      aria-label="Уменьшить масштаб"
-      onclick={() => changeZoom(-0.1)}>−</Button
-    ><span>{Math.round(zoom * 100)}%</span><Button aria-label="Увеличить масштаб" onclick={() => changeZoom(0.1)}
-      >+</Button
-    >{#if navigationOutline.length}<select
-        aria-label="Оглавление книги"
-        onchange={(event) => go(Number(event.currentTarget.value))}
-        ><option value="">Оглавление</option>{#each navigationOutline as item (item.id)}<option value={item.page}
-            >{item.parentId ? `↳ ${item.title}` : item.title}</option
-          >{/each}</select
-      >{/if}
+<section class="overflow-hidden border border-[#cfd1cd] bg-[#52565b]" aria-label="Встроенный PDF.js просмотрщик">
+  <div
+    class="flex items-center gap-[7px] bg-[#27313a] p-2 text-white [&_label]:flex [&_label]:items-center [&_label]:gap-[5px] [&_input]:min-h-10 [&_input]:w-[58px] [&_input]:p-[7px]"
+  >
+    <Button disabled={page <= 1} onclick={() => go(page - 1)}>Предыдущая</Button>
+    <div class="grid grid-cols-[58px_auto] items-end gap-1">
+      <NumberField id="pdf-page" label="Страница" min={1} max={pageCount} bind:value={page} onChange={go} />
+      <span class="pb-2.5">из {pageCount}</span>
+    </div>
+    <Button disabled={page >= pageCount} onclick={() => go(page + 1)}>Следующая</Button>
+    <IconButton label="Уменьшить масштаб" onclick={() => changeZoom(-0.1)}>
+      {#snippet icon()}<ZoomOut size={18} />{/snippet}
+    </IconButton>
+    <span>{Math.round(zoom * 100)}%</span>
+    <IconButton label="Увеличить масштаб" onclick={() => changeZoom(0.1)}>
+      {#snippet icon()}<ZoomIn size={18} />{/snippet}
+    </IconButton>
+    {#if navigationOutline.length}<div class="ml-auto min-w-48 text-ink">
+        <SelectField
+          label="Оглавление книги"
+          placeholder="Оглавление"
+          options={navigationOutline.map((item) => ({
+            value: String(item.page),
+            label: item.parentId ? `↳ ${item.title}` : item.title,
+          }))}
+          onValueChange={(value) => go(Number(value))}
+        />
+      </div>{/if}
   </div>
   {#if error}<p role="alert">Не удалось открыть PDF: {error}</p>{/if}
   <div
-    class="pdf-scroll"
+    class="h-[58vh] min-h-[440px] overflow-auto"
     bind:this={scrollContainer}
     onscroll={() => onPosition(page, zoom, scrollContainer.scrollTop)}
   >
-    <div class="pdf-page">
+    <div class="relative mx-auto my-[22px] w-max shadow-[0_4px_20px_#0006] [&_canvas]:block">
       <canvas bind:this={canvas}></canvas>
       <div class="textLayer" bind:this={textLayerContainer}></div>
     </div>
@@ -181,48 +170,8 @@
 </section>
 
 <style>
-  .pdf-viewer {
-    overflow: hidden;
-    border: 1px solid #cfd1cd;
-    background: #52565b;
-  }
-  .pdf-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    background: #27313a;
-    padding: 8px;
-    color: white;
-  }
-  .pdf-toolbar label {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-  .pdf-toolbar input {
-    width: 58px;
-    min-height: 40px;
-    padding: 7px;
-  }
-  .pdf-toolbar select {
-    width: auto;
-    margin: 0;
-  }
-  .pdf-scroll {
-    height: 58vh;
-    min-height: 440px;
-    overflow: auto;
-  }
-  .pdf-page {
-    position: relative;
-    width: max-content;
-    margin: 22px auto;
-    box-shadow: 0 4px 20px #0006;
-  }
-  .pdf-page canvas {
-    display: block;
-  }
-  .pdf-page :global(.textLayer) {
+  /* PDF.js owns and positions the dynamic display layer. */
+  :global(.textLayer) {
     position: absolute;
     inset: 0;
   }

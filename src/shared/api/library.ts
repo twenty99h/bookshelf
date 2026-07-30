@@ -1,80 +1,63 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Book } from "./generated/Book";
 import type { CodexStreamEvent } from "./generated/CodexStreamEvent";
+import type { CommandError } from "./generated/CommandError";
 import type { DraftNote } from "./generated/DraftNote";
 import type { Experiment } from "./generated/Experiment";
 import type { Idea } from "./generated/Idea";
+import type { IdeaAssignment } from "./generated/IdeaAssignment";
 import type { IdeaLink } from "./generated/IdeaLink";
+import type { IdeaRelation } from "./generated/IdeaRelation";
 import type { IdeaReview } from "./generated/IdeaReview";
 import type { LibraryAction } from "./generated/LibraryAction";
 import type { LibraryState } from "./generated/LibraryState";
 import type { OutlineItem } from "./generated/OutlineItem";
 import type { Recall } from "./generated/Recall";
+import type { RecallRating } from "./generated/RecallRating";
 import type { Retrospective } from "./generated/Retrospective";
 import type { ReviewDecision } from "./generated/ReviewDecision";
 import type { ReviewKind } from "./generated/ReviewKind";
 import type { SearchResult } from "./generated/SearchResult";
 import type { SearchResultKind } from "./generated/SearchResultKind";
 import type { StudySession } from "./generated/StudySession";
+import type { SessionStatus } from "./generated/SessionStatus";
 import type { Topic } from "./generated/Topic";
 import type { TransferMaterial } from "./generated/TransferMaterial";
 
 export type {
   Book,
   CodexStreamEvent,
+  CommandError,
   DraftNote,
   Experiment,
   Idea,
+  IdeaAssignment,
   IdeaLink,
+  IdeaRelation,
   IdeaReview,
   LibraryAction,
   LibraryState,
   OutlineItem,
   Recall,
+  RecallRating,
   Retrospective,
   ReviewDecision,
   ReviewKind,
   SearchResult,
   SearchResultKind,
   StudySession,
+  SessionStatus,
   Topic,
   TransferMaterial,
 };
-type CommandError = { code?: string; message?: string };
-
-const emptyFields: Omit<LibraryState, "books" | "workspaceNote"> = {
-  drafts: [],
-  ideas: [],
-  topics: [],
-  ideaLinks: [],
-  experiments: [],
-  recalls: [],
-  sessions: [],
-  materials: [],
-  reviews: [],
-  activeStudyBookId: null,
-  weeklySessionBudget: 3,
-  lastDebtChange: 0,
-  lastDebtChangedAt: 0,
-  debtNotificationSentAt: null,
-  debtReminderDays: 7,
-};
-
-function normalizeLibrary(value: Partial<LibraryState>): LibraryState {
-  return { ...emptyFields, books: [], workspaceNote: "", ...value };
-}
-
 export async function loadLibrary(): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("load_library"));
-}
-export async function saveWorkspaceNote(note: string): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("save_workspace_note", { note }));
+  return invoke<LibraryState>("load_library");
 }
 export async function executeLibraryAction(action: LibraryAction): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("execute_library_action", { action }));
+  return invoke<LibraryState>("execute_library_action", { action });
 }
 export async function importPdf(path: string, title = ""): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("import_pdf", { path, title }));
+  return invoke<LibraryState>("import_pdf", { path, title });
 }
 export async function searchLibrary(query: string): Promise<SearchResult[]> {
   return invoke<SearchResult[]>("search_library", { query });
@@ -86,16 +69,16 @@ export async function exportLibraryArchive(path: string, password: string): Prom
   return invoke("export_library_archive", { path, password });
 }
 export async function importLibraryArchive(path: string, password: string): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("import_library_archive", { path, password }));
+  return invoke<LibraryState>("import_library_archive", { path, password });
 }
 export async function restoreLatestSnapshot(): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("restore_latest_snapshot"));
+  return invoke<LibraryState>("restore_latest_snapshot");
 }
 export async function exportMaterialMarkdown(materialId: string, path: string): Promise<void> {
   return invoke("export_material_markdown", { materialId, path });
 }
 export async function exportDraftMarkdown(draftId: string, path: string): Promise<LibraryState> {
-  return normalizeLibrary(await invoke<LibraryState>("export_draft_markdown", { draftId, path }));
+  return invoke<LibraryState>("export_draft_markdown", { draftId, path });
 }
 export async function installSignedUpdate(): Promise<boolean> {
   return invoke<boolean>("install_signed_update");
@@ -114,9 +97,13 @@ export async function runCodexReview(
   approvedPackage: string,
   recallAnswer?: string,
 ): Promise<LibraryState> {
-  return normalizeLibrary(
-    await invoke<LibraryState>("run_codex_review", { requestId, ideaId, requestKind, recallAnswer, approvedPackage }),
-  );
+  return invoke<LibraryState>("run_codex_review", {
+    requestId,
+    ideaId,
+    requestKind,
+    recallAnswer,
+    approvedPackage,
+  });
 }
 export async function cancelCodexReview(requestId: string): Promise<void> {
   return invoke("cancel_codex_review", { requestId });

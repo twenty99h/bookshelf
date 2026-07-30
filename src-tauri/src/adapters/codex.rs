@@ -154,17 +154,60 @@ struct CompletedTurn {
     error: Option<RpcError>,
 }
 
-#[derive(Debug)]
-pub struct CodexError {
-    pub code: &'static str,
-    pub message: String,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CodexErrorKind {
+    Cancelled,
+    Unavailable,
+    Protocol,
+    Rejected,
+    Process,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CodexError {
+    #[error("{0}")]
+    Cancelled(String),
+    #[error("{0}")]
+    Unavailable(String),
+    #[error("{0}")]
+    Protocol(String),
+    #[error("{0}")]
+    Rejected(String),
+    #[error("{0}")]
+    Process(String),
 }
 
 impl CodexError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
+        let message = message.into();
+        match code {
+            "codex_cancelled" => Self::Cancelled(message),
+            "codex_unavailable" => Self::Unavailable(message),
+            "codex_protocol_failed" => Self::Protocol(message),
+            "codex_login_failed" | "codex_review_failed" | "codex_package_empty" => {
+                Self::Rejected(message)
+            }
+            _ => Self::Process(message),
+        }
+    }
+
+    pub(crate) fn kind(&self) -> CodexErrorKind {
+        match self {
+            Self::Cancelled(_) => CodexErrorKind::Cancelled,
+            Self::Unavailable(_) => CodexErrorKind::Unavailable,
+            Self::Protocol(_) => CodexErrorKind::Protocol,
+            Self::Rejected(_) => CodexErrorKind::Rejected,
+            Self::Process(_) => CodexErrorKind::Process,
+        }
+    }
+
+    pub(crate) fn into_message(self) -> String {
+        match self {
+            Self::Cancelled(message)
+            | Self::Unavailable(message)
+            | Self::Protocol(message)
+            | Self::Rejected(message)
+            | Self::Process(message) => message,
         }
     }
 }
@@ -551,5 +594,38 @@ mod tests {
             stream_message(interrupted),
             StreamMessage::Interrupted
         ));
+
+        let failed: ServerEvent = serde_json::from_str(
+            r#"{"method":"turn/completed","params":{"turn":{"status":"failed","error":{"message":"sidecar crashed"}}}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            stream_message(failed),
+            StreamMessage::Failed(message) if message == "sidecar crashed"
+        ));
+    }
+
+    #[test]
+    fn external_failures_have_a_closed_stable_taxonomy() {
+        assert_eq!(
+            CodexError::new("codex_cancelled", "cancelled").kind(),
+            CodexErrorKind::Cancelled
+        );
+        assert_eq!(
+            CodexError::new("codex_unavailable", "missing binary").kind(),
+            CodexErrorKind::Unavailable
+        );
+        assert_eq!(
+            CodexError::new("codex_protocol_failed", "schema mismatch").kind(),
+            CodexErrorKind::Protocol
+        );
+        assert_eq!(
+            CodexError::new("codex_login_failed", "login refused").kind(),
+            CodexErrorKind::Rejected
+        );
+        assert_eq!(
+            CodexError::new("codex_crashed", "crashed").kind(),
+            CodexErrorKind::Process
+        );
     }
 }

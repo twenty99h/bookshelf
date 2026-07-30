@@ -1,20 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { Button, Eyebrow, Surface } from "@/shared/ui";
+  import { Button, CheckboxField, Eyebrow, SelectField, Surface, TextArea } from "@/shared/ui";
   import {
-    cancelCodexReview,
     commandErrorMessage,
-    prepareCodexReview,
-    runCodexReview,
-    type CodexStreamEvent,
     type Idea,
+    type IdeaAssignment,
+    type IdeaRelation,
     type LibraryAction,
     type LibraryState,
     type ReviewKind,
   } from "@/shared/api";
   import CodexReviewPanel from "./CodexReviewPanel.svelte";
+  import ExperimentForm from "./ExperimentForm.svelte";
+  import MaterialForm from "./MaterialForm.svelte";
   import RecallPanel from "./RecallPanel.svelte";
+  import type { LibraryCommands, StopListening } from "../model/library-commands";
 
   const reviewCopy: Record<ReviewKind, { title: string }> = {
     ideaReview: { title: "Проверка идеи" },
@@ -27,33 +27,27 @@
 
   let {
     library,
+    commands,
     run,
     bookTitle,
     onLibrary,
   }: {
     library: LibraryState;
+    commands: LibraryCommands;
     run: (action: LibraryAction, success?: string) => Promise<void>;
     bookTitle: (bookId: string) => string;
     onLibrary: (state: LibraryState) => void;
   } = $props();
   let selectedId = $state("");
   let formulation = $state("");
-  let assignments = $state<string[]>(["recall"]);
+  let recallAssigned = $state(true);
+  let transferAssigned = $state(false);
+  let experimentAssigned = $state(false);
+  let masteredAssigned = $state(false);
   let topicId = $state("");
   let linkedIdeaId = $state("");
-  let relation = $state("complements");
-  let situation = $state("");
-  let actionTaken = $state("");
-  let observedResult = $state("");
-  let conclusion = $state("");
-  let successful = $state(false);
+  let relation = $state<IdeaRelation>("complements");
   let recallIdea = $state<Idea | null>(null);
-  let materialTitle = $state("");
-  let problem = $state("");
-  let materialIdea = $state("");
-  let example = $state("");
-  let materialResult = $state("");
-  let limitations = $state("");
   let reviewIdea = $state<Idea | null>(null);
   let reviewKind = $state<ReviewKind>("ideaReview");
   let reviewPackageText = $state("");
@@ -64,19 +58,31 @@
   let reviewRunning = $state(false);
   let reviewConclusion = $state("");
   let proposedTopic = $state("");
-  let eventUnlisten: UnlistenFn | undefined;
+  let eventUnlisten: StopListening | undefined;
 
   let selected = $derived(library.ideas.find((idea) => idea.id === selectedId));
+  let assignments = $derived(
+    [
+      recallAssigned && "recall",
+      transferAssigned && "transfer",
+      experimentAssigned && "experiment",
+      masteredAssigned && "mastered",
+    ].filter((value): value is IdeaAssignment => Boolean(value)),
+  );
   let scheduledRecalls = $derived.by(() => {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- TODO(ticket 10): replace this legacy derived Map in the idea workflow slice.
-    const latest = new Map<string, LibraryState["recalls"][number]>();
-    for (const recall of library.recalls) latest.set(recall.ideaId, recall);
-    return [...latest.values()].sort((left, right) => left.nextAt - right.nextAt);
+    return library.recalls
+      .filter(
+        (recall, index, recalls) => recalls.findLastIndex((candidate) => candidate.ideaId === recall.ideaId) === index,
+      )
+      .toSorted((left, right) => left.nextAt - right.nextAt);
   });
   function selectIdea(idea: Idea) {
     selectedId = idea.id;
     formulation = idea.formulation;
-    assignments = [...idea.assignments];
+    recallAssigned = idea.assignments.includes("recall");
+    transferAssigned = idea.assignments.includes("transfer");
+    experimentAssigned = idea.assignments.includes("experiment");
+    masteredAssigned = idea.assignments.includes("mastered");
   }
   function startRecall(idea: Idea) {
     recallIdea = idea;
@@ -90,34 +96,36 @@
       "Новая версия формулировки сохранена",
     );
   }
-  async function completeExperiment(event: SubmitEvent) {
-    event.preventDefault();
+  async function completeExperiment(result: {
+    situation: string;
+    action: string;
+    result: string;
+    conclusion: string;
+    successful: boolean;
+  }) {
     if (!selected) return;
     await run(
       {
         kind: "completeExperiment",
         ideaId: selected.id,
-        situation,
-        action: actionTaken,
-        result: observedResult,
-        conclusion,
-        successful,
+        ...result,
       },
       "Практический эксперимент завершён",
     );
   }
-  async function saveMaterial(event: SubmitEvent) {
-    event.preventDefault();
+  async function saveMaterial(material: {
+    title: string;
+    problem: string;
+    idea: string;
+    example: string;
+    result: string;
+    limitations: string;
+  }) {
     if (!selected) return;
     await run(
       {
         kind: "saveMaterial",
-        title: materialTitle,
-        problem,
-        idea: materialIdea,
-        example,
-        result: materialResult,
-        limitations,
+        ...material,
         ideaIds: [selected.id],
       },
       "Материал для передачи сохранён",
@@ -134,7 +142,7 @@
       "";
     reviewError = "";
     try {
-      reviewPackageText = await prepareCodexReview(idea.id, kind, recallAnswer || undefined);
+      reviewPackageText = await commands.prepareCodexReview(idea.id, kind, recallAnswer || undefined);
     } catch (cause) {
       reviewError = commandErrorMessage(cause);
     }
@@ -147,7 +155,7 @@
     reviewRunning = true;
     try {
       onLibrary(
-        await runCodexReview(
+        await commands.runCodexReview(
           reviewRequestId,
           reviewIdea.id,
           reviewKind,
@@ -201,12 +209,13 @@
     if (reviewKind === "linkSuggestion" && reviewIdea?.id === source.id) await resolveCurrentReview("unchanged");
   }
   onMount(() => {
-    void listen<CodexStreamEvent>("codex-review-event", (event) => {
-      if (event.payload.requestId === reviewRequestId && event.payload.kind === "delta")
-        reviewResponse += event.payload.text;
-    }).then((stop) => {
-      eventUnlisten = stop;
-    });
+    void commands
+      .onCodexReview((event) => {
+        if (event.requestId === reviewRequestId && event.kind === "delta") reviewResponse += event.text;
+      })
+      .then((stop) => {
+        eventUnlisten = stop;
+      });
     return () => eventUnlisten?.();
   });
 </script>
@@ -236,7 +245,7 @@
       bind:linkIdeaId={linkedIdeaId}
       bind:linkRelation={relation}
       onStart={startReview}
-      onCancel={() => cancelCodexReview(reviewRequestId)}
+      onCancel={() => commands.cancelCodexReview(reviewRequestId)}
       onConfirmTopic={confirmTopicSuggestion}
       onConfirmLink={confirmLink}
       onReject={() => resolveCurrentReview("unchanged")}
@@ -248,8 +257,7 @@
   {#if scheduledRecalls.length > 0}
     <section class="mb-5 grid gap-3" aria-label="Запланированные восстановления">
       <h2>Запланированные восстановления</h2>
-      <!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 11): key legacy recall rows in the recall slice. -->
-      {#each scheduledRecalls as recall}
+      {#each scheduledRecalls as recall (recall.id)}
         {@const idea = library.ideas.find((candidate) => candidate.id === recall.ideaId)}
         {#if idea}<Surface
             ><div class="flex flex-wrap items-center justify-between gap-3">
@@ -278,8 +286,7 @@
   <section
     class="grid gap-3.5 [&_blockquote]:my-3.5 [&_blockquote]:border-l-[3px] [&_blockquote]:border-[#b8d94a] [&_blockquote]:py-1.5 [&_blockquote]:pl-4 [&_blockquote]:leading-relaxed [&_blockquote]:text-[#45515a] [&_details]:mt-3.5 [&_details]:border-t [&_details]:border-rule [&_details]:pt-3 [&_h2]:mb-2 [&_h2]:font-display [&_h2]:text-[25px] [&_h2]:font-medium [&_h2]:leading-tight [&_p]:mt-0 [&_summary]:cursor-pointer [&_summary]:font-bold"
   >
-    <!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 10): key legacy idea cards in the idea workflow slice. -->
-    {#each library.ideas as idea}
+    {#each library.ideas as idea (idea.id)}
       {@const pendingReviews = library.reviews.filter((review) => review.ideaId === idea.id && review.pending)}
       <Surface
         ><Eyebrow>{bookTitle(idea.bookId)} · {idea.section}</Eyebrow>
@@ -292,8 +299,7 @@
         <div class="mt-2.5 flex flex-wrap items-center gap-2">
           <Button onclick={() => selectIdea(idea)}>Развить идею</Button><Button onclick={() => startRecall(idea)}
             >Восстановить знание</Button
-          ><!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 14): key legacy review actions in the Codex slice. -->
-          {#each pendingReviews as pendingReview}<Button
+          >{#each pendingReviews as pendingReview (pendingReview.id)}<Button
               variant="primary"
               onclick={() => prepareReview(idea, pendingReview.requestKind)}
               >Разобрать: {reviewCopy[pendingReview.requestKind].title}</Button
@@ -302,11 +308,10 @@
         </div>
         <details>
           <summary>Источник и история</summary
-          ><!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 10): key legacy source rows in the idea workflow slice. -->
-          {#each idea.fragments as fragment}<blockquote>
+          >{#each idea.fragments as fragment (`${fragment.page}-${fragment.excerpt}-${fragment.context}`)}<blockquote>
               стр. {fragment.page}: {fragment.excerpt}
-            </blockquote>{/each}<!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 10): key legacy idea versions in the idea workflow slice. -->
-          {#each idea.versions as version}<p>
+            </blockquote>{/each}
+          {#each idea.versions as version (`${version.savedAt}-${version.formulation}`)}<p>
               {new Date(version.savedAt * 1000).toLocaleString("ru")}: {version.formulation}
             </p>{/each}
         </details></Surface
@@ -317,21 +322,19 @@
   {#if selected}
     <section class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
       <form class={workCardClass} onsubmit={saveIdea}>
-        <p class="eyebrow">Авторская формулировка</p>
+        <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">
+          Авторская формулировка
+        </p>
         <h2>Развить идею</h2>
-        <label for="formulation">Текущая формулировка</label><textarea id="formulation" bind:value={formulation}
-        ></textarea>
+        <TextArea id="formulation" label="Текущая формулировка" bind:value={formulation} />
         <fieldset>
-          <legend>Назначения идеи</legend><label class="!my-2 !flex items-center gap-2"
-            ><input class="!min-h-[18px] !w-[18px]" type="checkbox" value="recall" bind:group={assignments} /> Восстановление</label
-          ><label class="!my-2 !flex items-center gap-2"
-            ><input class="!min-h-[18px] !w-[18px]" type="checkbox" value="transfer" bind:group={assignments} /> Передача</label
-          ><label class="!my-2 !flex items-center gap-2"
-            ><input class="!min-h-[18px] !w-[18px]" type="checkbox" value="experiment" bind:group={assignments} /> Практический
-            эксперимент</label
-          ><label class="!my-2 !flex items-center gap-2"
-            ><input class="!min-h-[18px] !w-[18px]" type="checkbox" value="mastered" bind:group={assignments} /> Уже освоено</label
-          >
+          <legend>Назначения идеи</legend>
+          <div class="grid gap-2 py-2">
+            <CheckboxField label="Восстановление" bind:checked={recallAssigned} />
+            <CheckboxField label="Передача" bind:checked={transferAssigned} />
+            <CheckboxField label="Практический эксперимент" bind:checked={experimentAssigned} />
+            <CheckboxField label="Уже освоено" bind:checked={masteredAssigned} />
+          </div>
         </fieldset>
         <Button type="submit">Сохранить новую версию</Button>
       </form>
@@ -343,55 +346,37 @@
           if (topicId) run({ kind: "assignTopic", ideaId: selected!.id, topicId }, "Идея добавлена в тему");
         }}
       >
-        <p class="eyebrow">Организация знаний</p>
+        <p class="mb-[7px] text-[11px] font-extrabold uppercase tracking-[.11em] text-[#66717a]">Организация знаний</p>
         <h2>Тема и связь</h2>
-        <label for="topic">Тема</label><select id="topic" bind:value={topicId}
-          ><option value="">Выберите тему</option
-          ><!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 10): key legacy topic options in the idea workflow slice. -->
-          {#each library.topics as topic}<option value={topic.id}>{topic.name}</option>{/each}</select
-        ><Button type="submit">Добавить в тему</Button><label for="linked">Связанная идея</label><select
-          id="linked"
+        <SelectField
+          label="Тема"
+          bind:value={topicId}
+          placeholder="Выберите тему"
+          options={library.topics.map((topic) => ({ value: topic.id, label: topic.name }))}
+        />
+        <Button type="submit">Добавить в тему</Button>
+        <SelectField
+          label="Связанная идея"
           bind:value={linkedIdeaId}
-          ><option value="">Выберите идею</option
-          ><!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 10): key legacy related-idea options in the idea workflow slice. -->
-          {#each library.ideas.filter((idea) => idea.id !== selected?.id) as idea}<option value={idea.id}
-              >{idea.formulation}</option
-            >{/each}</select
-        ><select aria-label="Тип связи" bind:value={relation}
-          ><option value="complements">Дополняет</option><option value="clarifies">Уточняет</option><option
-            value="contradicts">Противоречит</option
-          ></select
-        ><Button onclick={confirmLink}>Подтвердить связь</Button>
+          placeholder="Выберите идею"
+          options={library.ideas
+            .filter((idea) => idea.id !== selected?.id)
+            .map((idea) => ({ value: idea.id, label: idea.formulation }))}
+        />
+        <SelectField
+          label="Тип связи"
+          bind:value={relation}
+          options={[
+            { value: "complements", label: "Дополняет" },
+            { value: "clarifies", label: "Уточняет" },
+            { value: "contradicts", label: "Противоречит" },
+          ]}
+        />
+        <Button onclick={confirmLink}>Подтвердить связь</Button>
       </form>
 
-      <form class={workCardClass} onsubmit={completeExperiment}>
-        <p class="eyebrow">Практический эксперимент</p>
-        <h2>Зафиксировать результат</h2>
-        <label for="situation">Ситуация</label><textarea id="situation" bind:value={situation}></textarea><label
-          for="action-taken">Действие</label
-        ><textarea id="action-taken" bind:value={actionTaken}></textarea><label for="observed"
-          >Наблюдаемый результат</label
-        ><textarea id="observed" bind:value={observedResult}></textarea><label for="conclusion">Мой вывод</label
-        ><textarea id="conclusion" bind:value={conclusion}></textarea><label class="!my-2 !flex items-center gap-2"
-          ><input class="!min-h-[18px] !w-[18px]" type="checkbox" bind:checked={successful} /> Результат оказался положительным</label
-        ><Button type="submit">Завершить эксперимент</Button>
-      </form>
-
-      <form class={workCardClass} onsubmit={saveMaterial}>
-        <p class="eyebrow">Передача знания</p>
-        <h2>Авторский Markdown-материал</h2>
-        <label for="material-title">Название</label><input id="material-title" bind:value={materialTitle} /><label
-          for="problem">Проблема</label
-        ><textarea id="problem" bind:value={problem}></textarea><label for="material-idea">Идея</label><textarea
-          id="material-idea"
-          bind:value={materialIdea}></textarea><label for="example">Пример применения</label><textarea
-          id="example"
-          bind:value={example}></textarea><label for="material-result">Результат</label><textarea
-          id="material-result"
-          bind:value={materialResult}></textarea><label for="limitations">Ограничения</label><textarea
-          id="limitations"
-          bind:value={limitations}></textarea><Button type="submit">Сохранить материал</Button>
-      </form>
+      <ExperimentForm onComplete={completeExperiment} />
+      <MaterialForm onSave={saveMaterial} />
     </section>
     <div class="my-[18px] flex flex-wrap items-center gap-2">
       <Button onclick={() => prepareReview(selected!, "topicSuggestion")}>Предложить тему через Codex</Button><Button
@@ -413,7 +398,7 @@
       bind:linkIdeaId={linkedIdeaId}
       bind:linkRelation={relation}
       onStart={startReview}
-      onCancel={() => cancelCodexReview(reviewRequestId)}
+      onCancel={() => commands.cancelCodexReview(reviewRequestId)}
       onConfirmTopic={confirmTopicSuggestion}
       onConfirmLink={confirmLink}
       onReject={() => resolveCurrentReview("unchanged")}

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Button, Eyebrow, Surface, TextArea } from "@/shared/ui";
-  import type { Idea, LibraryAction, LibraryState } from "@/shared/api";
+  import { Button, Eyebrow, Surface, TextArea, TextField } from "@/shared/ui";
+  import type { Idea, LibraryAction, LibraryState, RecallRating } from "@/shared/api";
 
   let {
     idea,
@@ -20,7 +20,7 @@
   let revealed = $state(false);
   let nextDate = $state("");
 
-  async function finish(rating: string, message: string) {
+  async function finish(rating: RecallRating, message: string) {
     const nextAt = nextDate ? Math.floor(new Date(`${nextDate}T12:00:00`).getTime() / 1000) : null;
     await run({ kind: "completeRecall", ideaId: idea.id, answer, rating, nextAt }, message);
     onClose();
@@ -38,20 +38,16 @@
     <div class="my-[18px] rounded-lg bg-leaf-soft p-[18px]">
       <Eyebrow>Исходная идея</Eyebrow>
       <h2 class="mb-2 font-serif text-2xl font-medium leading-tight">{idea.formulation}</h2>
-      <!-- eslint-disable-next-line svelte/require-each-key -- TODO(ticket 11): key legacy experiment rows in the recall slice. -->
-      {#each library.experiments.filter((item) => item.ideaId === idea.id) as experiment}
+      {#each library.experiments.filter((item) => item.ideaId === idea.id) as experiment (experiment.id)}
         <p><b>Результат применения:</b> {experiment.result}. {experiment.conclusion}</p>
       {/each}
     </div>
     <div class="my-3 flex flex-wrap gap-2">
       <Button onclick={() => onReview(answer)}>Попросить Codex указать пробелы</Button>
     </div>
-    <label class="mb-1.5 block text-xs font-bold text-slate-600" for="recall-next"
-      >Перенести предложенное восстановление (необязательно)</label
-    >
-    <input
-      class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 focus:border-leaf focus:outline-none focus:ring-3 focus:ring-leaf/20"
+    <TextField
       id="recall-next"
+      label="Перенести предложенное восстановление (необязательно)"
       type="date"
       bind:value={nextDate}
     />
@@ -59,7 +55,8 @@
     <div class="flex flex-wrap gap-2">
       <Button onclick={() => finish("confident", "Следующее восстановление предложено через 30 дней")}>Уверенно</Button>
       <Button onclick={() => finish("partial", "Следующее восстановление предложено через 7 дней")}>Частично</Button>
-      <Button onclick={() => finish("missed", "Следующее восстановление предложено завтра")}>Не восстановил</Button>
+      <Button onclick={() => finish("notRecalled", "Следующее восстановление предложено завтра")}>Не восстановил</Button
+      >
     </div>
   {/if}
   <div class="mt-4"><Button onclick={onClose}>Закрыть</Button></div>

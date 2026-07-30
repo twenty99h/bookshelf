@@ -436,6 +436,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-updater",
  "tempfile",
+ "thiserror 2.0.19",
  "tokio",
  "ts-rs",
 ]

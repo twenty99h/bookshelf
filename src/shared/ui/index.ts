@@ -1,10 +1,15 @@
 export { default as Button } from "./Button.svelte";
+export { default as CheckboxField } from "./CheckboxField.svelte";
+export { default as DialogModal } from "./DialogModal.svelte";
 export { default as StatePanel } from "./StatePanel.svelte";
 export { default as StatusMessage } from "./StatusMessage.svelte";
 export { default as TextField } from "./TextField.svelte";
 export { default as WorkspaceShell } from "./WorkspaceShell.svelte";
 export { default as NavigationItem } from "./NavigationItem.svelte";
+export { default as NumberField } from "./NumberField.svelte";
+export { default as IconButton } from "./IconButton.svelte";
 export { default as PageHeader } from "./PageHeader.svelte";
 export { default as Surface } from "./Surface.svelte";
+export { default as SelectField } from "./SelectField.svelte";
 export { default as Eyebrow } from "./Eyebrow.svelte";
 export { default as TextArea } from "./TextArea.svelte";
