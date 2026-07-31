@@ -3,6 +3,8 @@
   import type { SourceFragment } from "@/shared/api";
   import "./pdf-text-layer.css";
 
+  type SavedSource = { draftId: string; fragment: SourceFragment };
+
   let {
     document,
     page,
@@ -17,8 +19,8 @@
     zoom: number;
     mode: "muted" | "original" | "dark";
     invertImages: boolean;
-    sources?: SourceFragment[];
-    onSourceSelect: (source: SourceFragment) => void;
+    sources?: SavedSource[];
+    onSourceSelect: (draftId: string, source: SourceFragment) => void;
   } = $props();
 
   let renderTask: RenderTask | null = null;
@@ -66,7 +68,10 @@
         container: targetTextLayer,
         viewport,
       }).render();
-      highlightSavedSources(targetTextLayer, sources);
+      highlightSavedSources(
+        targetTextLayer,
+        sources.map((source) => source.fragment),
+      );
     } catch (cause) {
       if (cause instanceof Error && cause.name !== "RenderingCancelledException") error = cause.message;
     }
@@ -117,11 +122,11 @@
       class="absolute inset-y-0 right-0 w-6 border-l border-amber/40"
       aria-label="Цифровое поле источников"
     >
-      {#each sources as source, index (`${source.page}-${source.excerpt}`)}<button
+      {#each sources as source, index (`${source.draftId}-${source.fragment.page}-${source.fragment.excerpt}`)}<button
           aria-label="Открыть сохранённый источник на странице {page}"
           class="absolute right-1 grid size-4 place-items-center rounded-full border border-amber bg-[#40331f] text-[9px] text-amber outline-offset-2 focus-visible:outline-2 focus-visible:outline-amber"
           style:top={`${18 + index * 7}%`}
-          onclick={() => onSourceSelect(source)}>{index + 1}</button
+          onclick={() => onSourceSelect(source.draftId, source.fragment)}>{index + 1}</button
         >{/each}
     </div>{/if}
   {#if error}<p class="absolute inset-x-8 top-8 rounded bg-white p-4 text-sm text-danger" role="alert">

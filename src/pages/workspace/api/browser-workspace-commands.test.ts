@@ -104,6 +104,18 @@ describe("browser workspace command seam", () => {
 
     expect(state.ideas[0]?.fragments).toEqual(draft!.fragments);
     expect(state.drafts).not.toContainEqual(expect.objectContaining({ id: draft!.id }));
+    expect(state.milestones.slice(-2).map((milestone) => milestone.kind)).toEqual(["draftResolved", "ideaFormulated"]);
+  });
+
+  it("rejects links between ideas owned by different books", async () => {
+    await expect(
+      browserWorkspaceCommands.execute({
+        kind: "linkIdeas",
+        fromIdeaId: "idea-leader",
+        toIdeaId: "idea-model",
+        relation: "complements",
+      }),
+    ).rejects.toThrow("только идеи одной книги");
   });
 
   it("keeps the farthest page when the reader returns to an earlier source", async () => {

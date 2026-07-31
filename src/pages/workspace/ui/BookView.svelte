@@ -17,6 +17,8 @@
     onDelete: () => void;
   } = $props();
 
+  let actionsOpen = $state(false);
+
   const bookIdeaIds = $derived(
     new Set(library.ideas.filter((idea) => idea.bookId === selectedBook?.id).map((idea) => idea.id)),
   );
@@ -47,9 +49,8 @@
       <p class="font-mono text-xs uppercase tracking-[.14em] text-iris">{bookStatus(selectedBook)}</p>
       <h2 class="mt-3 text-4xl font-semibold tracking-[-.035em]">{selectedBook.title}</h2>
       <p class="mt-4 text-mist-dim">
-        PDF · {selectedBook.pageCount} страниц · {selectedBook.hasTextLayer
-          ? "есть оглавление и текстовый слой"
-          : "без текстового слоя — доступна ручная заметка к странице"}
+        PDF · {selectedBook.pageCount} страниц · {selectedBook.outline.length ? "есть оглавление" : "без оглавления"} ·
+        {selectedBook.hasTextLayer ? "есть текстовый слой" : "без текстового слоя — доступна ручная заметка к странице"}
       </p>
       <div class="mt-7 flex gap-3">
         <a
@@ -58,26 +59,37 @@
           ><BookOpen class="size-4" />Продолжить чтение</a
         ><Button onclick={() => onRun({ kind: "activateStudy", bookId: selectedBook.id }, "Книга стала активной")}
           >Сделать активной</Button
-        ><button aria-label="Другие действия" class="grid size-11 place-items-center rounded-md border border-white/10"
-          ><MoreHorizontal /></button
         >
-      </div>
-      <div class="mt-4 flex gap-4 text-sm">
-        {#if selectedBook.archived}<button
-            class="text-iris"
-            onclick={() => onRun({ kind: "restoreBook", bookId: selectedBook.id }, "Книга возвращена из архива")}
-            >Вернуть из архива</button
-          >{:else}<button
-            class="text-mist-dim"
-            onclick={() => onRun({ kind: "archiveBook", bookId: selectedBook.id }, "Книга перемещена в архив")}
-            >Архивировать</button
-          >{/if}
-        {#if selectedBook.studyStatus === "completed"}<button
-            class="text-iris"
-            onclick={() => onRun({ kind: "startRepeatStudy", bookId: selectedBook.id }, "Начат новый цикл изучения")}
-            >Начать повторное изучение</button
-          >{/if}
-        <button class="text-danger" onclick={() => onDelete()}>Удалить навсегда</button>
+        <div class="relative">
+          <button
+            aria-label="Другие действия"
+            aria-expanded={actionsOpen}
+            class="grid size-11 place-items-center rounded-md border border-white/10"
+            onclick={() => (actionsOpen = !actionsOpen)}><MoreHorizontal /></button
+          >{#if actionsOpen}<div
+              class="absolute right-0 top-12 z-20 grid w-64 gap-1 rounded-lg border border-white/10 bg-night p-2 shadow-2xl"
+            >
+              {#if selectedBook.archived}<button
+                  class="rounded px-3 py-2 text-left text-sm text-iris hover:bg-slate"
+                  onclick={() => onRun({ kind: "restoreBook", bookId: selectedBook.id }, "Книга возвращена из архива")}
+                  >Вернуть из архива</button
+                >
+              {:else}<button
+                  class="rounded px-3 py-2 text-left text-sm text-mist-dim hover:bg-slate"
+                  onclick={() => onRun({ kind: "archiveBook", bookId: selectedBook.id }, "Книга перемещена в архив")}
+                  >Архивировать</button
+                >{/if}
+              {#if selectedBook.studyStatus === "completed"}<button
+                  class="rounded px-3 py-2 text-left text-sm text-iris hover:bg-slate"
+                  onclick={() =>
+                    onRun({ kind: "startRepeatStudy", bookId: selectedBook.id }, "Начат новый цикл изучения")}
+                  >Начать повторное изучение</button
+                >{/if}
+              <button class="rounded px-3 py-2 text-left text-sm text-danger hover:bg-danger/10" onclick={onDelete}
+                >Удалить навсегда</button
+              >
+            </div>{/if}
+        </div>
       </div>
     </div>
     <aside class="rounded-xl border border-white/8 bg-slate p-5 max-[1280px]:col-span-2">
@@ -97,10 +109,23 @@
     </aside>
   </div>
   <nav class="mt-9 flex gap-7 border-b border-white/8" aria-label="Разделы книги">
-    {#each ["Обзор", "Черновики", "Идеи", "Практика"] as tab (tab)}<button
-        class="border-b-2 border-transparent px-1 pb-3 text-sm text-mist-dim first:border-iris first:text-mist"
-        >{tab}</button
-      >{/each}
+    <a
+      aria-current="page"
+      href={resolve("/library/[bookId]", { bookId: selectedBook.id })}
+      class="border-b-2 border-iris px-1 pb-3 text-sm text-mist no-underline">Обзор</a
+    >
+    <a
+      href={resolve(`/drafts?book=${encodeURIComponent(selectedBook.id)}`)}
+      class="border-b-2 border-transparent px-1 pb-3 text-sm text-mist-dim no-underline">Черновики</a
+    >
+    <a
+      href={resolve(`/knowledge?book=${encodeURIComponent(selectedBook.id)}`)}
+      class="border-b-2 border-transparent px-1 pb-3 text-sm text-mist-dim no-underline">Идеи</a
+    >
+    <a
+      href={resolve(`/practice?book=${encodeURIComponent(selectedBook.id)}`)}
+      class="border-b-2 border-transparent px-1 pb-3 text-sm text-mist-dim no-underline">Практика</a
+    >
   </nav>
   <section class="mt-6 grid grid-cols-3 gap-5">
     <article class="col-span-2 rounded-xl border border-white/8 bg-slate p-6">

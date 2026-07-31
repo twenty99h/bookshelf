@@ -25,7 +25,6 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@/app": new URL("./src/app", import.meta.url).pathname,
-      "@/features": new URL("./src/features", import.meta.url).pathname,
       "@/pages": new URL("./src/pages", import.meta.url).pathname,
       "@/shared": new URL("./src/shared", import.meta.url).pathname,
     },

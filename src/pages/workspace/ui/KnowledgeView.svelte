@@ -8,6 +8,7 @@
 </script>
 
 <script lang="ts">
+  import { onMount } from "svelte";
   import { resolve } from "$app/paths";
   import { Sparkles } from "@lucide/svelte";
   import { Button, CheckboxField, SelectField, TextArea, TextField } from "@/shared/ui";
@@ -16,12 +17,7 @@
     library,
     selectedIdea,
     selectedTopic = $bindable(),
-    formulation = $bindable(),
-    assignments = $bindable(),
-    relatedIdeaId = $bindable(),
-    relation = $bindable(),
     bookForIdea,
-    onToggleAssignment,
     onSave,
     onLink,
     onPrepareReview,
@@ -29,16 +25,30 @@
     library: LibraryState;
     selectedIdea: Idea | null;
     selectedTopic: string;
-    formulation: string;
-    assignments: IdeaAssignment[];
-    relatedIdeaId: string;
-    relation: IdeaRelation;
     bookForIdea: (idea: Idea) => Book | undefined;
-    onToggleAssignment: (assignment: IdeaAssignment, checked: boolean) => void;
-    onSave: () => Promise<void>;
-    onLink: () => Promise<void>;
+    onSave: (formulation: string, assignments: IdeaAssignment[]) => Promise<void>;
+    onLink: (relatedIdeaId: string, relation: IdeaRelation) => Promise<void>;
     onPrepareReview: () => Promise<void>;
   } = $props();
+
+  let formulation = $state("");
+  let assignments = $state<IdeaAssignment[]>([]);
+  let relatedIdeaId = $state("");
+  let relation = $state<IdeaRelation>("complements");
+  const relatedIdeas = $derived(
+    library.ideas.filter((idea) => idea.bookId === selectedIdea?.bookId && idea.id !== selectedIdea?.id),
+  );
+
+  onMount(() => {
+    formulation = selectedIdea?.formulation ?? "";
+    assignments = [...(selectedIdea?.assignments ?? [])];
+  });
+
+  function toggleAssignment(assignment: IdeaAssignment, checked: boolean) {
+    assignments = checked
+      ? [...new Set([...assignments, assignment])]
+      : assignments.filter((candidate) => candidate !== assignment);
+  }
 </script>
 
 <div class="mb-5 flex items-end justify-between">
@@ -56,7 +66,7 @@
   />
 </div>
 <section
-  class="grid min-h-[680px] grid-cols-[38%_62%] overflow-hidden rounded-xl border border-white/8 bg-slate max-[1280px]:grid-cols-[42%_58%]"
+  class="grid min-h-[680px] grid-cols-[38%_62%] overflow-hidden rounded-xl border border-white/8 bg-slate max-[1280px]:grid-cols-1"
 >
   <div class="border-r border-white/8">
     <div class="border-b border-white/8 p-4">
@@ -76,7 +86,9 @@
         </div></a
       >{/each}
   </div>
-  {#if selectedIdea}<article class="overflow-auto p-8">
+  {#if selectedIdea}<article
+      class="overflow-auto p-8 max-[1280px]:fixed max-[1280px]:inset-y-4 max-[1280px]:right-4 max-[1280px]:z-30 max-[1280px]:w-[min(720px,calc(100vw-2rem))] max-[1280px]:rounded-xl max-[1280px]:border max-[1280px]:border-white/10 max-[1280px]:bg-slate max-[1280px]:shadow-2xl"
+    >
       <p class="font-mono text-xs uppercase tracking-[.14em] text-iris">Идея книги</p>
       <h2 class="mt-4 max-w-4xl text-3xl font-semibold leading-[1.3] tracking-[-.025em]">
         {selectedIdea.formulation}
@@ -88,12 +100,14 @@
               id={`assignment-${assignment[0]}`}
               label={assignment[1] ?? ""}
               checked={assignments.includes(assignment[0] as IdeaAssignment)}
-              onCheckedChange={(checked) => onToggleAssignment(assignment[0] as IdeaAssignment, checked)}
+              onCheckedChange={(checked) => toggleAssignment(assignment[0] as IdeaAssignment, checked)}
             />{/each}
         </div>
         <div>
-          <Button variant="primary" disabled={!formulation.trim() || assignments.length === 0} onclick={onSave}
-            >Сохранить идею</Button
+          <Button
+            variant="primary"
+            disabled={!formulation.trim() || assignments.length === 0}
+            onclick={() => onSave(formulation, assignments)}>Сохранить идею</Button
           >
         </div>
       </section>
@@ -132,9 +146,7 @@
             <SelectField
               label="Связанная идея"
               value={relatedIdeaId}
-              options={library!.ideas
-                .filter((idea) => idea.id !== selectedIdea.id)
-                .map((idea) => ({ value: idea.id, label: idea.formulation }))}
+              options={relatedIdeas.map((idea) => ({ value: idea.id, label: idea.formulation }))}
               onValueChange={(value) => (relatedIdeaId = value)}
             />
             <SelectField
@@ -147,7 +159,7 @@
               ]}
               onValueChange={(value) => (relation = value as IdeaRelation)}
             />
-            <Button disabled={!relatedIdeaId} onclick={onLink}>Подтвердить связь</Button>
+            <Button disabled={!relatedIdeaId} onclick={() => onLink(relatedIdeaId, relation)}>Подтвердить связь</Button>
           </div>
         </div>
       </section>

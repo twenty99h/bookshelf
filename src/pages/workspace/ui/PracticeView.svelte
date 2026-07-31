@@ -1,23 +1,11 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { Check } from "@lucide/svelte";
   import { Button, SelectField, TextArea, TextField } from "@/shared/ui";
   import type { ExperimentStatus, LibraryState, RecallRating } from "@/shared/api";
 
   let {
     library,
-    recallAnswer = $bindable(),
-    recallRevealed = $bindable(),
-    experimentStep,
-    experimentSituation = $bindable(),
-    experimentAction = $bindable(),
-    experimentResult = $bindable(),
-    experimentConclusion = $bindable(),
-    experimentNextStep = $bindable(),
-    experimentCancellationReason = $bindable(),
-    newExperimentIdeaId = $bindable(),
-    newExperimentSituation = $bindable(),
-    newExperimentAction = $bindable(),
-    newExperimentNextStep = $bindable(),
     onCompleteRecall,
     onRescheduleRecall,
     onStartRecallNow,
@@ -25,30 +13,99 @@
     onAdvanceExperiment,
   }: {
     library: LibraryState;
-    recallAnswer: string;
-    recallRevealed: boolean;
-    experimentStep: string;
-    experimentSituation: string;
-    experimentAction: string;
-    experimentResult: string;
-    experimentConclusion: string;
-    experimentNextStep: string;
-    experimentCancellationReason: string;
-    newExperimentIdeaId: string;
-    newExperimentSituation: string;
-    newExperimentAction: string;
-    newExperimentNextStep: string;
-    onCompleteRecall: (rating: RecallRating) => Promise<void>;
+    onCompleteRecall: (answer: string, rating: RecallRating) => Promise<void>;
     onRescheduleRecall: (days: number) => Promise<void>;
     onStartRecallNow: () => Promise<void>;
-    onCreateExperiment: () => Promise<void>;
-    onAdvanceExperiment: (status: ExperimentStatus) => Promise<void>;
+    onCreateExperiment: (draft: {
+      ideaId: string;
+      situation: string;
+      action: string;
+      nextStep: string;
+    }) => Promise<void>;
+    onAdvanceExperiment: (
+      experimentId: string,
+      status: ExperimentStatus,
+      draft: {
+        situation: string;
+        action: string;
+        result: string;
+        conclusion: string;
+        cancellationReason: string;
+        nextStep: string;
+      },
+    ) => Promise<void>;
   } = $props();
 
-  const recall = $derived(library.recalls[0] ?? null);
+  let recallAnswer = $state("");
+  let recallRevealed = $state(false);
+  let selectedExperimentId = $state("");
+  let experimentStep = $state<ExperimentStatus>("intent");
+  let experimentSituation = $state("");
+  let experimentAction = $state("");
+  let experimentResult = $state("");
+  let experimentConclusion = $state("");
+  let experimentNextStep = $state("");
+  let experimentCancellationReason = $state("");
+  let newExperimentIdeaId = $state("");
+  let newExperimentSituation = $state("");
+  let newExperimentAction = $state("");
+  let newExperimentNextStep = $state("");
+
+  const recall = $derived(library.recalls.toSorted((a, b) => a.nextAt - b.nextAt)[0] ?? null);
   const recallIdea = $derived(library.ideas.find((idea) => idea.id === recall?.ideaId) ?? null);
-  const currentExperiment = $derived(library.experiments[0] ?? null);
+  const currentExperiment = $derived(library.experiments.find((item) => item.id === selectedExperimentId) ?? null);
   const experimentIdeas = $derived(library.ideas.filter((idea) => idea.assignments.includes("experiment")));
+  const relatedExperiments = $derived(library.experiments.filter((experiment) => experiment.ideaId === recallIdea?.id));
+
+  onMount(() => {
+    const firstExperiment = library.experiments[0];
+    if (firstExperiment) selectExperiment(firstExperiment.id);
+    newExperimentIdeaId = library.ideas.find((idea) => idea.assignments.includes("experiment"))?.id ?? "";
+  });
+
+  function selectExperiment(experimentId: string) {
+    const experiment = library.experiments.find((item) => item.id === experimentId);
+    if (!experiment) return;
+    selectedExperimentId = experiment.id;
+    experimentStep = experiment.status;
+    experimentSituation = experiment.situation;
+    experimentAction = experiment.action;
+    experimentResult = experiment.result;
+    experimentConclusion = experiment.conclusion;
+    experimentNextStep = experiment.nextStep;
+    experimentCancellationReason = experiment.cancellationReason;
+  }
+
+  async function advanceExperiment(status: ExperimentStatus) {
+    if (!currentExperiment) return;
+    await onAdvanceExperiment(currentExperiment.id, status, {
+      situation: experimentSituation,
+      action: experimentAction,
+      result: experimentResult,
+      conclusion: experimentConclusion,
+      cancellationReason: experimentCancellationReason,
+      nextStep: experimentNextStep,
+    });
+    experimentStep = status;
+  }
+
+  async function createExperiment() {
+    await onCreateExperiment({
+      ideaId: newExperimentIdeaId,
+      situation: newExperimentSituation,
+      action: newExperimentAction,
+      nextStep: newExperimentNextStep,
+    });
+    newExperimentSituation = "";
+    newExperimentAction = "";
+    newExperimentNextStep = "";
+  }
+
+  async function startRecallNow() {
+    recallRevealed = false;
+    recallAnswer = "";
+    await onStartRecallNow();
+  }
 
   function bookTitleForIdea(ideaId: string) {
     const idea = library.ideas.find((item) => item.id === ideaId);
@@ -76,7 +133,9 @@
   <div class="grid grid-cols-[minmax(0,.85fr)_minmax(420px,1.15fr)] gap-6 max-[1280px]:grid-cols-1">
     <section class="rounded-xl border border-white/8 bg-slate p-7">
       <p class="font-mono text-xs uppercase tracking-[.14em] text-iris">Восстановление знания</p>
-      <h2 class="mt-3 text-2xl font-semibold">Что меняется при отказе лидера?</h2>
+      <h2 class="mt-3 text-2xl font-semibold">
+        В какой ситуации применима идея из раздела «{recallIdea?.section ?? "книги"}»?
+      </h2>
       <p class="mt-3 leading-7 text-mist-dim">
         Опишите подходящую ситуацию, объясните идею своими словами и назовите ограничения.
       </p>
@@ -95,16 +154,22 @@
         <div class="mt-5">
           <p class="mb-3 text-sm font-semibold">Как удалось восстановить?</p>
           <div class="flex flex-wrap gap-2">
-            <Button onclick={() => onCompleteRecall("confident")}>Уверенно</Button><Button
-              onclick={() => onCompleteRecall("partial")}>Частично</Button
-            ><Button onclick={() => onCompleteRecall("notRecalled")}>Не восстановил</Button>
+            <Button onclick={() => onCompleteRecall(recallAnswer, "confident")}>Уверенно</Button><Button
+              onclick={() => onCompleteRecall(recallAnswer, "partial")}>Частично</Button
+            ><Button onclick={() => onCompleteRecall(recallAnswer, "notRecalled")}>Не восстановил</Button>
           </div>
-        </div>{/if}
+        </div>
+        {#if relatedExperiments.length}<div class="mt-5 rounded-lg border border-white/8 p-4">
+            <b class="text-sm">Связанные результаты практики</b>
+            {#each relatedExperiments as experiment (experiment.id)}<p class="mt-2 text-sm text-mist-dim">
+                {experiment.result || "Результат ещё не записан"}
+              </p>{/each}
+          </div>{/if}{/if}
       {#if recall}<div class="mt-6 border-t border-white/8 pt-5">
           <p class="text-sm text-mist-dim">Следующее восстановление: {recallDate(recall.nextAt)}.</p>
           <div class="mt-3 flex flex-wrap gap-2">
             <Button onclick={() => onRescheduleRecall(7)}>Перенести на 7 дней</Button>
-            <Button onclick={onStartRecallNow}>Начать сейчас</Button>
+            <Button onclick={startRecallNow}>Начать сейчас</Button>
           </div>
           <p class="mt-3 text-xs text-mist-faint">Без просрочки, календарного сеанса и записи о пропуске.</p>
         </div>{/if}
@@ -146,27 +211,27 @@
         </div>
         <div class="mt-5 flex flex-wrap gap-2">
           {#if !["completed", "cancelled"].includes(experimentStep)}<Button
-              onclick={() => onAdvanceExperiment(experimentStep as ExperimentStatus)}>Сохранить изменения</Button
+              onclick={() => advanceExperiment(experimentStep)}>Сохранить изменения</Button
             >{/if}
-          {#if experimentStep === "intent"}<Button variant="primary" onclick={() => onAdvanceExperiment("running")}
+          {#if experimentStep === "intent"}<Button variant="primary" onclick={() => advanceExperiment("running")}
               >Начать выполнение</Button
             >{:else if experimentStep === "running"}<Button
               variant="primary"
-              onclick={() => onAdvanceExperiment("reviewing")}>Перейти к итогу</Button
+              onclick={() => advanceExperiment("reviewing")}>Перейти к итогу</Button
             >{:else if experimentStep === "reviewing"}<Button
               variant="primary"
               disabled={!experimentSituation.trim() ||
                 !experimentAction.trim() ||
                 !experimentResult.trim() ||
                 !experimentConclusion.trim()}
-              onclick={() => onAdvanceExperiment("completed")}>Завершить эксперимент</Button
-            ><Button onclick={() => onAdvanceExperiment("running")}>Продолжить выполнение</Button>{/if}
+              onclick={() => advanceExperiment("completed")}>Завершить эксперимент</Button
+            ><Button onclick={() => advanceExperiment("running")}>Продолжить выполнение</Button>{/if}
         </div>
         {#if !["completed", "cancelled"].includes(experimentStep)}<div class="mt-5 flex items-end gap-3">
             <div class="min-w-0 flex-1">
               <TextField id="experiment-cancel" label="Причина отмены" bind:value={experimentCancellationReason} />
             </div>
-            <Button disabled={!experimentCancellationReason.trim()} onclick={() => onAdvanceExperiment("cancelled")}
+            <Button disabled={!experimentCancellationReason.trim()} onclick={() => advanceExperiment("cancelled")}
               >Отменить с причиной</Button
             >
           </div>{/if}
@@ -192,15 +257,17 @@
         <Button
           variant="primary"
           disabled={!newExperimentIdeaId || !newExperimentSituation.trim() || !newExperimentAction.trim()}
-          onclick={onCreateExperiment}>Создать замысел</Button
+          onclick={createExperiment}>Создать замысел</Button
         >
       </div>
     </div>
     <div>
       <p class="font-mono text-xs uppercase tracking-[.14em] text-mist-dim">Все эксперименты</p>
       <div class="mt-4 grid gap-2">
-        {#each library.experiments as experiment (experiment.id)}<article
-            class="flex items-start gap-4 rounded-lg border border-white/8 bg-night/30 p-4"
+        {#each library.experiments as experiment (experiment.id)}<button
+            aria-current={experiment.id === selectedExperimentId ? "true" : undefined}
+            class="flex items-start gap-4 rounded-lg border border-white/8 bg-night/30 p-4 text-left aria-[current=true]:border-iris/60"
+            onclick={() => selectExperiment(experiment.id)}
           >
             <div class="min-w-0">
               <b class="block">{experiment.situation}</b>
@@ -209,7 +276,7 @@
                 >{/if}
             </div>
             <span class="ml-auto shrink-0 font-mono text-xs text-iris">{statusLabel(experiment.status)}</span>
-          </article>{/each}
+          </button>{/each}
       </div>
     </div>
   </section>

@@ -53,45 +53,7 @@ impl LibraryState {
                 }
             }
             LibraryAction::SaveOutline { book_id, outline } => {
-                if outline
-                    .iter()
-                    .any(|item| item.title.trim().is_empty() || item.page == 0)
-                {
-                    return Err(DomainError::new(
-                        "outline_item_invalid",
-                        "Укажите название и страницу раздела",
-                    ));
-                }
-                let ids = outline
-                    .iter()
-                    .map(|item| item.id.as_str())
-                    .collect::<HashSet<_>>();
-                let unique_ids = ids.len() == outline.len();
-                let parents_exist = outline.iter().all(|item| {
-                    item.parent_id
-                        .as_deref()
-                        .is_none_or(|parent| parent != item.id && ids.contains(parent))
-                });
-                let has_cycle = outline.iter().any(|item| {
-                    let mut seen = HashSet::from([item.id.as_str()]);
-                    let mut parent = item.parent_id.as_deref();
-                    while let Some(parent_id) = parent {
-                        if !seen.insert(parent_id) {
-                            return true;
-                        }
-                        parent = outline
-                            .iter()
-                            .find(|candidate| candidate.id == parent_id)
-                            .and_then(|candidate| candidate.parent_id.as_deref());
-                    }
-                    false
-                });
-                if !unique_ids || !parents_exist || has_cycle {
-                    return Err(DomainError::new(
-                        "outline_structure_invalid",
-                        "Проверьте вложенность и уникальность разделов",
-                    ));
-                }
+                reading::validate_outline(&outline)?;
                 find_book_mut(self, &book_id)?.outline = outline;
             }
             LibraryAction::CaptureDraft {
@@ -189,9 +151,10 @@ impl LibraryState {
                     .ok_or_else(|| {
                         DomainError::new("draft_not_found", "Черновая заметка не найдена")
                     })?;
+                let book_id = draft.book_id.clone();
                 let idea = Idea {
                     id: make_id("idea"),
-                    book_id: draft.book_id,
+                    book_id: book_id.clone(),
                     section,
                     formulation: formulation.clone(),
                     assignments,
@@ -212,17 +175,8 @@ impl LibraryState {
                 };
                 self.ideas.push(idea);
                 self.drafts.retain(|item| item.id != draft_id);
-                self.milestones.push(StudyMilestone {
-                    id: make_id("milestone"),
-                    book_id: self
-                        .ideas
-                        .last()
-                        .map(|idea| idea.book_id.clone())
-                        .unwrap_or_default(),
-                    kind: MilestoneKind::IdeaFormulated,
-                    occurred_at: timestamp,
-                    page: None,
-                });
+                self.milestones
+                    .extend(drafts::resolution_milestones(book_id, timestamp, make_id));
             }
             LibraryAction::AttachDraftToIdea { draft_id, idea_id } => {
                 let draft = self
@@ -439,14 +393,7 @@ impl LibraryState {
                 to_idea_id,
                 relation,
             } => {
-                if from_idea_id == to_idea_id {
-                    return Err(DomainError::new(
-                        "idea_link_invalid",
-                        "Выберите две идеи и допустимый тип связи",
-                    ));
-                }
-                find_idea(self, &from_idea_id)?;
-                find_idea(self, &to_idea_id)?;
+                knowledge::validate_link(self, &from_idea_id, &to_idea_id)?;
                 self.idea_links.push(IdeaLink {
                     id: make_id("link"),
                     from_idea_id,
@@ -545,7 +492,7 @@ impl LibraryState {
                     .ok_or_else(|| {
                         DomainError::new("experiment_not_found", "Эксперимент не найден")
                     })?;
-                if !valid_experiment_transition(current_status, status) {
+                if !practice::valid_experiment_transition(current_status, status) {
                     return Err(DomainError::new(
                         "experiment_transition_invalid",
                         "Выберите следующий допустимый этап эксперимента",
@@ -878,25 +825,6 @@ impl LibraryState {
         }
         Ok(())
     }
-}
-
-fn valid_experiment_transition(from: ExperimentStatus, to: ExperimentStatus) -> bool {
-    if from == to {
-        return !matches!(
-            from,
-            ExperimentStatus::Completed | ExperimentStatus::Cancelled
-        );
-    }
-    matches!(
-        (from, to),
-        (ExperimentStatus::Intent, ExperimentStatus::Running)
-            | (ExperimentStatus::Intent, ExperimentStatus::Cancelled)
-            | (ExperimentStatus::Running, ExperimentStatus::Reviewing)
-            | (ExperimentStatus::Running, ExperimentStatus::Cancelled)
-            | (ExperimentStatus::Reviewing, ExperimentStatus::Running)
-            | (ExperimentStatus::Reviewing, ExperimentStatus::Completed)
-            | (ExperimentStatus::Reviewing, ExperimentStatus::Cancelled)
-    )
 }
 
 fn ensure_book_allows_capture(state: &LibraryState, book_id: &str) -> Result<(), DomainError> {

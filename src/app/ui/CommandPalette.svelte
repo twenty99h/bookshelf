@@ -17,6 +17,17 @@
     onSearch: () => Promise<void>;
     onOpenResult: (result: PaletteResult) => void;
   } = $props();
+
+  let searchError = $state("");
+
+  async function submitSearch() {
+    searchError = "";
+    try {
+      await onSearch();
+    } catch (cause) {
+      searchError = cause instanceof Error ? cause.message : "Не удалось выполнить поиск";
+    }
+  }
 </script>
 
 <DialogModal
@@ -29,14 +40,16 @@
     class="grid gap-3"
     onsubmit={(event) => {
       event.preventDefault();
-      void onSearch();
+      void submitSearch();
     }}
   >
     <TextField id="command-search" label="Поиск" bind:value={query} placeholder="Название или формулировка" />
     <Button type="submit">Найти</Button>
   </form>
   <div class="grid gap-1" aria-live="polite">
-    {#if query && results.length === 0}<p class="text-sm text-mist-dim">
+    {#if searchError}<p class="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-danger" role="alert">
+        {searchError}. Введённый запрос сохранён; повторите поиск.
+      </p>{:else if query && results.length === 0}<p class="text-sm text-mist-dim">
         Совпадений нет. Измените запрос, введённый текст сохранён.
       </p>{/if}
     {#each results as result (`${result.kind}-${result.id}`)}

@@ -12,7 +12,6 @@ const config = {
     alias: {
       "@/app": "./src/app",
       "@/pages": "./src/pages",
-      "@/features": "./src/features",
       "@/shared": "./src/shared",
     },
     adapter: adapter({

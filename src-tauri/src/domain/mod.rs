@@ -6,6 +6,10 @@ use std::{
 };
 use ts_rs::TS;
 
+mod drafts;
+mod knowledge;
+mod practice;
+mod reading;
 mod rules;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);

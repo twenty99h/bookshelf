@@ -258,6 +258,46 @@ fn resolving_a_draft_requires_authored_text_but_allows_assignment_later() {
         .unwrap();
     assert!(state.drafts.is_empty());
     assert!(state.ideas[0].assignments.is_empty());
+    assert_eq!(
+        state
+            .milestones
+            .iter()
+            .filter(|milestone| milestone.kind == MilestoneKind::DraftResolved)
+            .count(),
+        1
+    );
+    assert_eq!(
+        state
+            .milestones
+            .iter()
+            .filter(|milestone| milestone.kind == MilestoneKind::IdeaFormulated)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn ideas_from_different_books_cannot_be_linked() {
+    let mut state = LibraryState {
+        books: vec![
+            Book::for_test("book-one", "Первая книга"),
+            Book::for_test("book-two", "Вторая книга"),
+        ],
+        ideas: vec![
+            Idea::for_test("idea-one", "book-one"),
+            Idea::for_test("idea-two", "book-two"),
+        ],
+        ..LibraryState::default()
+    };
+
+    let result = state.apply(LibraryAction::LinkIdeas {
+        from_idea_id: "idea-one".into(),
+        to_idea_id: "idea-two".into(),
+        relation: IdeaRelation::Complements,
+    });
+
+    assert_eq!(result.unwrap_err().code(), "idea_link_cross_book");
+    assert!(state.idea_links.is_empty());
 }
 
 #[test]
@@ -690,12 +730,56 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
     let complex = corpus.join("compressed-outline-fonts.pdf");
     let complex_bytes = fs::read(&complex).unwrap();
     let complex_document = lopdf::Document::load_mem(&complex_bytes).unwrap();
-    assert_eq!(complex_document.get_pages().len(), 2);
-    for marker in [b"/FlateDecode".as_slice(), b"/Outlines", b"/Encoding"] {
+    assert_eq!(complex_document.get_pages().len(), 10);
+    for marker in [
+        b"/FlateDecode".as_slice(),
+        b"/Outlines",
+        b"/Encoding",
+        b"/FontFile2",
+    ] {
         assert!(complex_bytes
             .windows(marker.len())
             .any(|window| window == marker));
     }
+    let extracted_text = complex_document
+        .get_pages()
+        .values()
+        .map(|page_id| complex_document.get_page_content(*page_id))
+        .filter_map(|bytes| lopdf::content::Content::decode(&bytes).ok())
+        .flat_map(|content| content.operations)
+        .filter(|operation| operation.operator == "Tj")
+        .filter_map(|operation| {
+            operation
+                .operands
+                .first()
+                .and_then(|operand| operand.as_str().ok())
+                .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    for marker in [
+        "COLUMN_LEFT",
+        "COLUMN_RIGHT",
+        "FORMULA_SUM",
+        "VISUAL_FIRST_STORED_SECOND",
+        "VISUAL_SECOND_STORED_FIRST",
+    ] {
+        assert!(
+            extracted_text.contains(marker),
+            "missing PDF corpus marker {marker}"
+        );
+    }
+    let has_broken_outline_destination = complex_document.objects.values().any(|object| {
+        object
+            .as_dict()
+            .ok()
+            .and_then(|dictionary| dictionary.get(b"D").ok())
+            .and_then(|destination| destination.as_array().ok())
+            .and_then(|destination| destination.first())
+            .and_then(|page| page.as_reference().ok())
+            .is_some_and(|page_id| !complex_document.objects.contains_key(&page_id))
+    });
+    assert!(has_broken_outline_destination);
     let result = crate::application::import_pdf(
         &library.reading_storage(),
         &library,

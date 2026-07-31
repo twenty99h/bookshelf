@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { BookCopy, Brain, Command, FlaskConical, Gauge, Library, Settings, StickyNote } from "@lucide/svelte";
   import { Button, DialogModal, TextArea } from "@/shared/ui";
   import {
     commandErrorMessage,
@@ -17,9 +16,9 @@
     type ReviewDecision,
     type SourceFragment,
   } from "@/shared/api";
-  import { createWorkspaceCommands, type WorkspaceCommands, type WorkspaceContext } from "@/features/workspace";
+  import { createWorkspaceCommands, type WorkspaceCommands } from "../api/workspace-commands";
+  import type { WorkspaceContext } from "../model/workspace-context";
   import CompletionView from "./CompletionView.svelte";
-  import CommandPalette from "./CommandPalette.svelte";
   import DashboardView from "./DashboardView.svelte";
   import BookView from "./BookView.svelte";
   import DraftsView from "./DraftsView.svelte";
@@ -43,19 +42,11 @@
   let busy = $state(false);
   let error = $state("");
   let feedback = $state("");
-  let paletteOpen = $state(false);
-  let paletteQuery = $state("");
-  let paletteResults = $state<{ id: string; kind: string; title: string; context: string }[]>([]);
 
   let libraryFilter = $state("all");
   let librarySort = $state("recent");
-  let draftMode = $state<"focus" | "list">("focus");
   let selectedDraftId = $state("");
-  let draftFormulation = $state("");
   let selectedTopic = $state("all");
-  let recallAnswer = $state("");
-  let recallRevealed = $state(false);
-  let experimentStep = $state("running");
   let completionStep = $state(1);
   let retrospective = $state("");
   let significantIdeas = $state<string[]>([]);
@@ -66,27 +57,12 @@
   let codexPackage = $state("");
   let codexReviewResult = $state("");
   let ideaFormulation = $state("");
-  let ideaAssignments = $state<IdeaAssignment[]>([]);
-  let relatedIdeaId = $state("");
-  let ideaRelation = $state<IdeaRelation>("complements");
   let reviewConclusion = $state("");
   let deleteBookOpen = $state(false);
-  let backupPassword = $state("");
-  let backupStatus = $state("");
   let settingsSection = $state<"interface" | "library" | "backups" | "ai">("interface");
   let updateStatus = $state("");
   let diagnosticStatus = $state("");
   let diagnosticEntries = $state<string[]>([]);
-  let experimentNextStep = $state("");
-  let experimentCancellationReason = $state("");
-  let experimentSituation = $state("");
-  let experimentAction = $state("");
-  let experimentResult = $state("");
-  let experimentConclusion = $state("");
-  let newExperimentIdeaId = $state("");
-  let newExperimentSituation = $state("");
-  let newExperimentAction = $state("");
-  let newExperimentNextStep = $state("");
 
   let readerSidebar = $state<"note" | "outline" | "search" | null>(null);
   let readerSidebarWidth = $state(400);
@@ -96,11 +72,6 @@
   let readerImages = $state(true);
   let readerSearch = $state("");
   let readerSearchResults = $state<{ page: number; excerpt: string }[]>([]);
-  let readerExcerpt = $state("");
-  let readerFragments = $state<SourceFragment[]>([]);
-  let readerComment = $state("");
-  let readerIdeaDraftId = $state("");
-  let readerIdeaFormulation = $state("");
   let saveState = $state<"saved" | "saving" | "error">("saved");
   let sidebarTrigger = $state<HTMLButtonElement | null>(null);
   let readerDocumentUrl = $state<string | null>(null);
@@ -200,20 +171,7 @@
       }
       if (selectedIdea) {
         ideaFormulation = selectedIdea.formulation;
-        ideaAssignments = [...selectedIdea.assignments];
-        relatedIdeaId = library.ideas.find((idea) => idea.id !== selectedIdea.id)?.id ?? "";
       }
-      const experiment = library.experiments[0];
-      if (experiment) {
-        experimentStep = experiment.status;
-        experimentSituation = experiment.situation;
-        experimentAction = experiment.action;
-        experimentResult = experiment.result;
-        experimentConclusion = experiment.conclusion;
-        experimentNextStep = experiment.nextStep;
-        experimentCancellationReason = experiment.cancellationReason;
-      }
-      newExperimentIdeaId = library.ideas.find((idea) => idea.assignments.includes("experiment"))?.id ?? "";
     } catch (cause) {
       error = commandErrorMessage(cause);
       recordDiagnostic("library-load", error);
@@ -257,39 +215,9 @@
     }
   }
 
-  async function searchPalette() {
-    if (!commands) return;
-    paletteResults = await commands.search(paletteQuery);
-  }
-
-  function openPaletteResult(result: { id: string; kind: string }) {
-    paletteOpen = false;
-    if (result.kind === "book") goto(resolve("/library/[bookId]", { bookId: result.id }));
-    else if (result.kind === "idea") goto(resolve("/knowledge/[ideaId]", { ideaId: result.id }));
-    else if (result.kind === "topic") goto(resolve(`/knowledge?topic=${encodeURIComponent(result.id)}`));
-    else if (result.kind === "draft") goto(resolve(`/drafts?draft=${encodeURIComponent(result.id)}`));
-    else if (result.kind === "material") {
-      const material = library?.materials.find((item) => item.id === result.id);
-      const idea = library?.ideas.find((item) => material?.ideaIds.includes(item.id));
-      const source = idea?.fragments[0];
-      if (idea && source)
-        goto(
-          resolve(`/reader/${encodeURIComponent(idea.bookId)}?sourcePage=${encodeURIComponent(String(source.page))}`),
-        );
-    }
-  }
-
   function handleGlobalKeydown(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-      event.preventDefault();
-      paletteOpen = true;
-    }
     if (context === "reader" && event.key === "Escape" && readerSidebar) {
       closeReaderSidebar();
-    }
-    if (context === "reader" && event.ctrlKey && event.key === "Enter" && readerSidebar === "note") {
-      event.preventDefault();
-      saveReaderDraft();
     }
     if (context === "reader" && event.ctrlKey && event.key.toLowerCase() === "f") {
       event.preventDefault();
@@ -333,60 +261,53 @@
     );
   }
 
-  async function saveReaderDraft(): Promise<string | null> {
-    if (!selectedBook || selectedBook.studyStatus === "completed" || !readerExcerpt.trim()) return null;
+  async function saveReaderDraft(
+    excerpt: string,
+    comment: string,
+    fragments: SourceFragment[],
+  ): Promise<string | null> {
+    if (!selectedBook || selectedBook.studyStatus === "completed" || !excerpt.trim()) return null;
     const existingDraftIds = new Set(library?.drafts.map((draft) => draft.id) ?? []);
     const saved = await executeLibraryAction(
-      readerFragments.length
+      fragments.length
         ? {
             kind: "captureDraftSources",
             bookId: selectedBook.id,
             section: "Глава 5 · Репликация",
-            fragments: readerFragments.map((fragment) => ({ ...fragment })),
-            comment: readerComment,
+            fragments: fragments.map((fragment) => ({ ...fragment })),
+            comment,
           }
         : {
             kind: "captureDraft",
             bookId: selectedBook.id,
             section: "Глава 5 · Репликация",
             page: readerPage,
-            excerpt: readerExcerpt,
+            excerpt,
             context: "Фрагмент сохранён из непрерывного режима чтения.",
-            comment: readerComment,
+            comment,
           },
       "Черновая заметка сохранена",
     );
     if (!saved) return null;
     const createdDraft = library?.drafts.find((draft) => !existingDraftIds.has(draft.id)) ?? null;
-    readerExcerpt = "";
-    readerFragments = [];
-    readerComment = "";
     return createdDraft?.id ?? null;
   }
 
-  async function startReaderIdea() {
-    const draftId = await saveReaderDraft();
-    if (draftId) readerIdeaDraftId = draftId;
-  }
-
-  async function createReaderIdea() {
-    if (!readerIdeaDraftId || !readerIdeaFormulation.trim()) return;
-    const draft = library?.drafts.find((item) => item.id === readerIdeaDraftId);
-    if (!draft) return;
+  async function createReaderIdea(draftId: string, formulation: string): Promise<boolean> {
+    if (!draftId || !formulation.trim()) return false;
+    const draft = library?.drafts.find((item) => item.id === draftId);
+    if (!draft) return false;
     const created = await executeLibraryAction(
       {
         kind: "resolveDraftAsIdea",
         draftId: draft.id,
-        formulation: readerIdeaFormulation,
+        formulation,
         section: draft.section,
         assignments: [],
       },
       "Идея сохранена; назначение идеи можно выбрать позже",
     );
-    if (created) {
-      readerIdeaDraftId = "";
-      readerIdeaFormulation = "";
-    }
+    return created;
   }
 
   async function saveReaderPosition(page = readerPage) {
@@ -406,20 +327,8 @@
     void saveReaderPosition();
   }
 
-  function openSavedSource(source: SourceFragment) {
-    readerPage = source.page;
-    readerExcerpt = source.excerpt;
-    readerFragments = [source];
-    setReaderSidebar("note");
-  }
-
-  function capturePdfSelection(fragments: SourceFragment[]) {
-    const first = fragments[0];
-    if (!first) return;
-    readerPage = first.page;
-    readerFragments = fragments;
-    readerExcerpt = fragments.map((fragment) => fragment.excerpt).join("\n");
-    setReaderSidebar("note");
+  function openSavedSource(draftId: string, source: SourceFragment) {
+    void saveReaderPosition(source.page).then(() => goto(resolve(`/drafts?draft=${encodeURIComponent(draftId)}`)));
   }
 
   function savePdfPosition(page: number, scroll: number) {
@@ -431,23 +340,22 @@
     ).then((saved) => (saveState = saved ? "saved" : "error"));
   }
 
-  async function resolveDraft() {
-    if (!focusedDraft || !draftFormulation.trim()) return;
+  async function resolveDraft(formulation: string) {
+    if (!focusedDraft || !formulation.trim()) return;
     await executeLibraryAction(
       {
         kind: "resolveDraftAsIdea",
         draftId: focusedDraft.id,
-        formulation: draftFormulation,
+        formulation,
         section: focusedDraft.section,
         assignments: [],
       },
       "Идея сформулирована; источник сохранён",
     );
-    draftFormulation = "";
   }
 
-  async function attachFocusedDraft() {
-    const idea = library?.ideas.find((item) => item.bookId === focusedDraft?.bookId);
+  async function attachFocusedDraft(ideaId: string) {
+    const idea = library?.ideas.find((item) => item.id === ideaId && item.bookId === focusedDraft?.bookId);
     if (!focusedDraft || !idea) return;
     await executeLibraryAction(
       { kind: "attachDraftToIdea", draftId: focusedDraft.id, ideaId: idea.id },
@@ -489,29 +397,23 @@
     }
   }
 
-  async function saveIdea() {
-    if (!selectedIdea || !ideaFormulation.trim() || ideaAssignments.length === 0) return;
+  async function saveIdea(formulation: string, assignments: IdeaAssignment[]) {
+    if (!selectedIdea || !formulation.trim() || assignments.length === 0) return;
     await executeLibraryAction(
       {
         kind: "updateIdea",
         ideaId: selectedIdea.id,
-        formulation: ideaFormulation,
-        assignments: [...ideaAssignments],
+        formulation,
+        assignments: [...assignments],
       },
       "Идея и назначения сохранены",
     );
   }
 
-  function toggleIdeaAssignment(assignment: IdeaAssignment, checked: boolean) {
-    ideaAssignments = checked
-      ? [...new Set([...ideaAssignments, assignment])]
-      : ideaAssignments.filter((candidate) => candidate !== assignment);
-  }
-
-  async function linkSelectedIdea() {
+  async function linkSelectedIdea(relatedIdeaId: string, relation: IdeaRelation) {
     if (!selectedIdea || !relatedIdeaId) return;
     await executeLibraryAction(
-      { kind: "linkIdeas", fromIdeaId: selectedIdea.id, toIdeaId: relatedIdeaId, relation: ideaRelation },
+      { kind: "linkIdeas", fromIdeaId: selectedIdea.id, toIdeaId: relatedIdeaId, relation },
       "Связь идей подтверждена",
     );
   }
@@ -550,12 +452,12 @@
     }
   }
 
-  async function completeRecall(rating: "confident" | "partial" | "notRecalled") {
-    const recall = library?.recalls[0];
+  async function completeRecall(answer: string, rating: "confident" | "partial" | "notRecalled") {
+    const recall = library?.recalls.toSorted((a, b) => a.nextAt - b.nextAt)[0];
     const idea = library?.ideas.find((item) => item.id === recall?.ideaId);
-    if (!idea || !recallAnswer.trim()) return;
+    if (!idea || !answer.trim()) return;
     await executeLibraryAction(
-      { kind: "completeRecall", ideaId: idea.id, answer: recallAnswer, rating },
+      { kind: "completeRecall", ideaId: idea.id, answer, rating },
       "Решение восстановления сохранено",
     );
   }
@@ -572,51 +474,54 @@
   async function startRecallNow() {
     const recall = library?.recalls[0];
     if (!recall) return;
-    recallRevealed = false;
-    recallAnswer = "";
     await executeLibraryAction(
       { kind: "rescheduleRecall", recallId: recall.id, nextAt: Math.floor(Date.now() / 1_000) },
       "Восстановление готово сейчас",
     );
   }
 
-  async function createExperiment() {
-    if (!newExperimentIdeaId || !newExperimentSituation.trim() || !newExperimentAction.trim()) return;
-    const created = await executeLibraryAction(
+  async function createExperiment(draft: { ideaId: string; situation: string; action: string; nextStep: string }) {
+    if (!draft.ideaId || !draft.situation.trim() || !draft.action.trim()) return;
+    await executeLibraryAction(
       {
         kind: "createExperiment",
-        ideaId: newExperimentIdeaId,
-        situation: newExperimentSituation,
-        action: newExperimentAction,
-        nextStep: newExperimentNextStep,
+        ideaId: draft.ideaId,
+        situation: draft.situation,
+        action: draft.action,
+        nextStep: draft.nextStep,
       },
       "Замысел эксперимента сохранён",
     );
-    if (created) {
-      newExperimentSituation = "";
-      newExperimentAction = "";
-      newExperimentNextStep = "";
-    }
   }
 
-  async function advanceExperiment(status: ExperimentStatus) {
-    const experiment = library?.experiments[0];
+  async function advanceExperiment(
+    experimentId: string,
+    status: ExperimentStatus,
+    draft: {
+      situation: string;
+      action: string;
+      result: string;
+      conclusion: string;
+      cancellationReason: string;
+      nextStep: string;
+    },
+  ) {
+    const experiment = library?.experiments.find((item) => item.id === experimentId);
     if (!experiment) return;
     await executeLibraryAction(
       {
         kind: "advanceExperiment",
         experimentId: experiment.id,
         status,
-        situation: experimentSituation,
-        action: experimentAction,
-        result: experimentResult,
-        conclusion: experimentConclusion,
-        cancellationReason: experimentCancellationReason,
-        nextStep: experimentNextStep || experiment.nextStep,
+        situation: draft.situation,
+        action: draft.action,
+        result: draft.result,
+        conclusion: draft.conclusion,
+        cancellationReason: draft.cancellationReason,
+        nextStep: draft.nextStep || experiment.nextStep,
       },
       "Состояние эксперимента сохранено",
     );
-    experimentStep = status;
   }
 
   async function saveCompletionStep(nextStep: number) {
@@ -656,36 +561,33 @@
     );
   }
 
-  async function restoreBackup() {
-    if (!commands) return;
+  async function restoreBackup(): Promise<string> {
+    if (!commands) return "Команды библиотеки недоступны";
     try {
-      backupStatus = "Восстановление…";
       library = await commands.restoreBackup();
-      backupStatus = "Последний snapshot восстановлен";
+      return "Последний snapshot восстановлен";
     } catch (cause) {
-      backupStatus = commandErrorMessage(cause);
+      return commandErrorMessage(cause);
     }
   }
 
-  async function exportArchive() {
-    if (!commands) return;
+  async function exportArchive(password: string): Promise<string> {
+    if (!commands) return "Команды библиотеки недоступны";
     try {
-      backupStatus = "Экспорт…";
-      backupStatus = (await commands.exportArchive(backupPassword)) ? "Переносимый архив сохранён" : "Экспорт отменён";
+      return (await commands.exportArchive(password)) ? "Переносимый архив сохранён" : "Экспорт отменён";
     } catch (cause) {
-      backupStatus = commandErrorMessage(cause);
+      return commandErrorMessage(cause);
     }
   }
 
-  async function importArchive() {
-    if (!commands) return;
+  async function importArchive(password: string): Promise<string> {
+    if (!commands) return "Команды библиотеки недоступны";
     try {
-      backupStatus = "Импорт…";
-      const snapshot = await commands.importArchive(backupPassword);
+      const snapshot = await commands.importArchive(password);
       if (snapshot) library = snapshot;
-      backupStatus = snapshot ? "Архив импортирован" : "Импорт отменён";
+      return snapshot ? "Архив импортирован" : "Импорт отменён";
     } catch (cause) {
-      backupStatus = commandErrorMessage(cause);
+      return commandErrorMessage(cause);
     }
   }
 
@@ -730,22 +632,6 @@
     return library?.books.find((book) => book.id === idea.bookId);
   }
 
-  function contextTitle(): string {
-    const titles: Record<WorkspaceContext, string> = {
-      dashboard: "Рабочий стол",
-      library: "Личная библиотека",
-      book: selectedBook?.title ?? "Книга",
-      reader: selectedBook?.title ?? "Режим чтения",
-      drafts: "Разбор черновиков",
-      knowledge: "Знания",
-      idea: "Идея книги",
-      practice: "Практика",
-      completion: "Завершение изучения",
-      settings: "Настройки",
-    };
-    return titles[context];
-  }
-
   function setCompletionWorkDecision(workId: string, kind: CompletionWorkDecision["kind"], decision: string) {
     completionWorkDecisions = [
       ...completionWorkDecisions.filter((item) => item.workId !== workId || item.kind !== kind),
@@ -780,10 +666,6 @@
     bind:sidebarWidth={readerSidebarWidth}
     bind:search={readerSearch}
     bind:searchResults={readerSearchResults}
-    bind:excerpt={readerExcerpt}
-    bind:comment={readerComment}
-    bind:ideaDraftId={readerIdeaDraftId}
-    bind:ideaFormulation={readerIdeaFormulation}
     {saveState}
     onChangeZoom={changeReaderZoom}
     onSetSidebar={setReaderSidebar}
@@ -791,7 +673,6 @@
     {rememberSidebarTrigger}
     onSavePosition={saveReaderPosition}
     onPdfPosition={savePdfPosition}
-    onSelection={capturePdfSelection}
     onSourceSelect={openSavedSource}
     onSearchResults={(results) => (readerSearchResults = results)}
     onSaveOutline={(outline) => {
@@ -799,182 +680,108 @@
         void executeLibraryAction({ kind: "saveOutline", bookId: selectedBook.id, outline }, "");
     }}
     onSaveDraft={saveReaderDraft}
-    onStartIdea={startReaderIdea}
     onCreateIdea={createReaderIdea}
     onPersistPreferences={persistReaderPreferences}
   />
 {:else}
-  <div class="min-h-screen bg-night text-mist">
-    <div class="grid min-h-screen grid-cols-[248px_minmax(0,1fr)] max-[1100px]:grid-cols-[210px_minmax(0,1fr)]">
-      <aside
-        class="sticky top-0 flex h-screen flex-col border-r border-white/8 bg-night px-4 py-5"
-        aria-label="Основная навигация"
-      >
-        <a href={resolve("/")} class="mb-8 flex items-center gap-3 rounded-lg px-3 py-2 text-mist no-underline">
-          <span class="grid size-9 place-items-center rounded-md border border-amber/35 bg-amber/10 text-amber"
-            ><BookCopy class="size-5" /></span
-          >
-          <span><b class="block tracking-wide">Bookshelf</b><small class="text-mist-dim">Личное изучение</small></span>
-        </a>
-        <nav class="grid gap-1">
-          {@render navItem("dashboard", "/", "Рабочий стол", Gauge)}
-          {@render navItem("library", "/library", "Библиотека", Library)}
-          {@render navItem("drafts", "/drafts", "Черновики", StickyNote, library?.drafts.length)}
-          {@render navItem("knowledge", "/knowledge", "Знания", Brain)}
-          {@render navItem("practice", "/practice", "Практика", FlaskConical)}
-        </nav>
-        <div class="mt-auto grid gap-2">
-          <button
-            class="flex min-h-10 items-center gap-3 rounded-md px-3 text-left text-sm text-mist-dim hover:bg-slate hover:text-mist focus-visible:outline-2 focus-visible:outline-iris"
-            onclick={() => (paletteOpen = true)}
-          >
-            <Command class="size-4" /><span>Быстрый переход</span><kbd class="ml-auto font-mono text-[11px]">Ctrl K</kbd
-            >
-          </button>
-          {@render navItem("settings", "/settings", "Настройки", Settings)}
-        </div>
-      </aside>
-
-      <main class="min-w-0 bg-graphite">
-        <header class="flex min-h-20 items-center justify-between border-b border-white/8 px-8 max-[1280px]:px-6">
-          <div>
-            <p class="mb-1 font-mono text-[11px] uppercase tracking-[0.16em] text-mist-dim">Bookshelf / {context}</p>
-            <h1 class="text-xl font-semibold tracking-tight">{contextTitle()}</h1>
-          </div>
-          <div class="flex items-center gap-3">
-            {#if feedback}<span role="status" class="font-mono text-xs text-success">{feedback}</span>{/if}
-            <span class="rounded-md border border-white/10 bg-slate px-3 py-2 font-mono text-xs text-mist-dim"
-              >Локальная библиотека</span
-            >
-          </div>
-        </header>
-
-        <div class="mx-auto max-w-[1500px] p-8 max-[1280px]:p-6">
-          {#if loading}
-            <div class="grid min-h-[60vh] place-items-center" role="status">Открываем личную библиотеку…</div>
-          {:else if error && !library}
-            <section
-              class="mx-auto mt-24 max-w-xl rounded-xl border border-danger/40 bg-slate p-8 text-center"
-              role="alert"
-            >
-              <h2 class="text-xl font-semibold">Личная библиотека не открылась</h2>
-              <p class="mt-3 text-mist-dim">{error}</p>
-              <div class="mt-6"><Button onclick={() => location.reload()}>Повторить открытие</Button></div>
-            </section>
-          {:else if library}
-            {#if error}<p class="mb-4 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm" role="alert">
-                {error}
-              </p>{/if}
-            {#if context === "dashboard"}<DashboardView
-                {library}
-                {activeBook}
-                {unfinishedCount}
-                {busy}
-                onImport={importBook}
-              />
-            {:else if context === "library"}<LibraryView
-                {library}
-                books={filteredBooks}
-                bind:filter={libraryFilter}
-                bind:sort={librarySort}
-                onImport={importBook}
-                {bookStatus}
-              />
-            {:else if context === "book"}<BookView
-                {library}
-                {selectedBook}
-                {bookStatus}
-                onRun={executeLibraryAction}
-                onDelete={() => (deleteBookOpen = true)}
-              />
-            {:else if context === "drafts"}<DraftsView
-                {library}
-                {focusedDraft}
-                bind:mode={draftMode}
-                bind:formulation={draftFormulation}
-                {busy}
-                onResolve={resolveDraft}
-                onAttach={attachFocusedDraft}
-                onRun={executeLibraryAction}
-                onExport={exportFocusedDraft}
-              />
-            {:else if context === "knowledge" || context === "idea"}<KnowledgeView
-                {library}
-                {selectedIdea}
-                bind:selectedTopic
-                bind:formulation={ideaFormulation}
-                bind:assignments={ideaAssignments}
-                bind:relatedIdeaId
-                bind:relation={ideaRelation}
-                {bookForIdea}
-                onToggleAssignment={toggleIdeaAssignment}
-                onSave={saveIdea}
-                onLink={linkSelectedIdea}
-                onPrepareReview={prepareIdeaReview}
-              />
-            {:else if context === "practice"}<PracticeView
-                {library}
-                bind:recallAnswer
-                bind:recallRevealed
-                {experimentStep}
-                bind:experimentSituation
-                bind:experimentAction
-                bind:experimentResult
-                bind:experimentConclusion
-                bind:experimentNextStep
-                bind:experimentCancellationReason
-                bind:newExperimentIdeaId
-                bind:newExperimentSituation
-                bind:newExperimentAction
-                bind:newExperimentNextStep
-                onCompleteRecall={completeRecall}
-                onRescheduleRecall={rescheduleRecall}
-                onStartRecallNow={startRecallNow}
-                onCreateExperiment={createExperiment}
-                onAdvanceExperiment={advanceExperiment}
-              />
-            {:else if context === "completion"}<CompletionView
-                step={completionStep}
-                {library}
-                {selectedBook}
-                bind:significantIdeas
-                bind:retrospective
-                bind:unfinishedWorkDecision
-                bind:continuingWork
-                workItems={completionWorkItems}
-                workDecisions={completionWorkDecisions}
-                onCompleteReading={async () => {
-                  if (selectedBook)
-                    await executeLibraryAction(
-                      { kind: "completeReading", bookId: selectedBook.id },
-                      "Чтение завершено",
-                    );
-                  await saveCompletionStep(2);
-                }}
-                onSaveStep={saveCompletionStep}
-                onSetWorkDecision={setCompletionWorkDecision}
-                hasDecisions={hasCompletionDecisions}
-                onFinish={finishStudy}
-              />
-            {:else if context === "settings"}<SettingsView
-                bind:section={settingsSection}
-                bind:readerMode
-                bind:readerImages
-                bind:backupPassword
-                {backupStatus}
-                {updateStatus}
-                {diagnosticStatus}
-                onRestoreBackup={restoreBackup}
-                onExportArchive={exportArchive}
-                onImportArchive={importArchive}
-                onExportDiagnostics={exportDiagnostics}
-                onCheckForUpdate={checkForUpdate}
-                onPersistPreferences={persistReaderPreferences}
-              />{/if}
-          {/if}
-        </div>
-      </main>
-    </div>
+  <div class="mx-auto max-w-[1500px] p-8 max-[1280px]:p-6">
+    {#if feedback}<p role="status" class="mb-4 font-mono text-xs text-success">{feedback}</p>{/if}
+    {#if loading}
+      <div class="grid min-h-[60vh] place-items-center" role="status">Открываем личную библиотеку…</div>
+    {:else if error && !library}
+      <section class="mx-auto mt-24 max-w-xl rounded-xl border border-danger/40 bg-slate p-8 text-center" role="alert">
+        <h2 class="text-xl font-semibold">Личная библиотека не открылась</h2>
+        <p class="mt-3 text-mist-dim">{error}</p>
+        <div class="mt-6"><Button onclick={() => location.reload()}>Повторить открытие</Button></div>
+      </section>
+    {:else if library}
+      {#if error}<p class="mb-4 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm" role="alert">
+          {error}
+        </p>{/if}
+      {#if context === "dashboard"}<DashboardView
+          {library}
+          {activeBook}
+          {unfinishedCount}
+          {busy}
+          onImport={importBook}
+        />
+      {:else if context === "library"}<LibraryView
+          {library}
+          books={filteredBooks}
+          bind:filter={libraryFilter}
+          bind:sort={librarySort}
+          onImport={importBook}
+          {bookStatus}
+        />
+      {:else if context === "book"}<BookView
+          {library}
+          {selectedBook}
+          {bookStatus}
+          onRun={executeLibraryAction}
+          onDelete={() => (deleteBookOpen = true)}
+        />
+      {:else if context === "drafts"}<DraftsView
+          {library}
+          {focusedDraft}
+          {busy}
+          onSelectDraft={(draftId) => (selectedDraftId = draftId)}
+          onResolve={resolveDraft}
+          onAttach={attachFocusedDraft}
+          onRun={executeLibraryAction}
+          onExport={exportFocusedDraft}
+        />
+      {:else if context === "knowledge" || context === "idea"}<KnowledgeView
+          {library}
+          {selectedIdea}
+          bind:selectedTopic
+          {bookForIdea}
+          onSave={saveIdea}
+          onLink={linkSelectedIdea}
+          onPrepareReview={prepareIdeaReview}
+        />
+      {:else if context === "practice"}<PracticeView
+          {library}
+          onCompleteRecall={completeRecall}
+          onRescheduleRecall={rescheduleRecall}
+          onStartRecallNow={startRecallNow}
+          onCreateExperiment={createExperiment}
+          onAdvanceExperiment={advanceExperiment}
+        />
+      {:else if context === "completion"}<CompletionView
+          step={completionStep}
+          {library}
+          {selectedBook}
+          bind:significantIdeas
+          bind:retrospective
+          bind:unfinishedWorkDecision
+          bind:continuingWork
+          workItems={completionWorkItems}
+          workDecisions={completionWorkDecisions}
+          onCompleteReading={async () => {
+            if (selectedBook)
+              await executeLibraryAction({ kind: "completeReading", bookId: selectedBook.id }, "Чтение завершено");
+            await saveCompletionStep(2);
+          }}
+          onSaveStep={saveCompletionStep}
+          onSetWorkDecision={setCompletionWorkDecision}
+          hasDecisions={hasCompletionDecisions}
+          onFinish={finishStudy}
+        />
+      {:else if context === "settings"}<SettingsView
+          {library}
+          bind:section={settingsSection}
+          bind:readerMode
+          bind:readerImages
+          {updateStatus}
+          {diagnosticStatus}
+          onRestoreBackup={restoreBackup}
+          onExportArchive={exportArchive}
+          onImportArchive={importArchive}
+          onExportDiagnostics={exportDiagnostics}
+          onCheckForUpdate={checkForUpdate}
+          onPersistPreferences={persistReaderPreferences}
+        />{/if}
+    {/if}
   </div>
 
   <DialogModal
@@ -1025,29 +832,3 @@
       </div>{/if}
   </DialogModal>
 {/if}
-
-<CommandPalette
-  bind:open={paletteOpen}
-  bind:query={paletteQuery}
-  results={paletteResults}
-  onSearch={searchPalette}
-  onOpenResult={openPaletteResult}
-/>
-
-{#snippet navItem(
-  itemContext: WorkspaceContext,
-  href: "/" | "/library" | "/drafts" | "/knowledge" | "/practice" | "/settings",
-  label: string,
-  Icon: typeof Gauge,
-  badge?: number,
-)}
-  <a
-    href={resolve(href)}
-    aria-current={context === itemContext || (itemContext === "knowledge" && context === "idea") ? "page" : undefined}
-    class="group flex min-h-11 items-center gap-3 rounded-md border border-transparent px-3 text-sm text-mist-dim no-underline hover:bg-slate hover:text-mist aria-[current=page]:border-iris/20 aria-[current=page]:bg-iris/12 aria-[current=page]:text-mist"
-  >
-    <Icon class="size-[18px] group-aria-[current=page]:text-iris" /><span>{label}</span>
-    {#if badge}<span class="ml-auto rounded-full bg-amber/15 px-2 py-0.5 font-mono text-[11px] text-amber">{badge}</span
-      >{/if}
-  </a>
-{/snippet}

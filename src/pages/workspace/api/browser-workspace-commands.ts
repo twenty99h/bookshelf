@@ -204,6 +204,22 @@ function applyAction(action: LibraryAction) {
         topicIds: [],
       });
       state.drafts = state.drafts.filter((item) => item.id !== action.draftId);
+      state.milestones.push(
+        {
+          id: `milestone-draft-resolved-${state.milestones.length + 1}`,
+          bookId: draft.bookId,
+          kind: "draftResolved",
+          occurredAt: 1_785_283_200,
+          page: null,
+        },
+        {
+          id: `milestone-idea-formulated-${state.milestones.length + 2}`,
+          bookId: draft.bookId,
+          kind: "ideaFormulated",
+          occurredAt: 1_785_283_200,
+          page: null,
+        },
+      );
       break;
     }
     case "attachDraftToIdea": {
@@ -291,7 +307,10 @@ function applyAction(action: LibraryAction) {
       }
       break;
     }
-    case "linkIdeas":
+    case "linkIdeas": {
+      const from = state.ideas.find((idea) => idea.id === action.fromIdeaId);
+      const to = state.ideas.find((idea) => idea.id === action.toIdeaId);
+      if (from && to && from.bookId !== to.bookId) throw new Error("Связывать можно только идеи одной книги");
       state.ideaLinks.push({
         id: `link-${state.ideaLinks.length + 1}`,
         fromIdeaId: action.fromIdeaId,
@@ -299,6 +318,7 @@ function applyAction(action: LibraryAction) {
         relation: action.relation,
       });
       break;
+    }
     case "resolveReview": {
       const pending = state.reviews.find(
         (review) => review.ideaId === action.ideaId && review.requestKind === action.requestKind && review.pending,

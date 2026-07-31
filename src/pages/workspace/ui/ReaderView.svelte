@@ -3,7 +3,7 @@
   import { ArrowLeft, ListTree, PanelRight, Search, StickyNote, X, ZoomIn, ZoomOut } from "@lucide/svelte";
   import { Button, TextArea, TextField } from "@/shared/ui";
   import type { Book, LibraryState, OutlineItem, SourceFragment } from "@/shared/api";
-  import { ContinuousPdfReader } from "@/features/workspace";
+  import ContinuousPdfReader from "./reader/ContinuousPdfReader.svelte";
 
   type ReaderSidebar = "note" | "outline" | "search" | null;
   type DocumentMode = "muted" | "original" | "dark";
@@ -21,10 +21,6 @@
     sidebarWidth = $bindable(),
     search = $bindable(),
     searchResults = $bindable(),
-    excerpt = $bindable(),
-    comment = $bindable(),
-    ideaDraftId = $bindable(),
-    ideaFormulation = $bindable(),
     saveState,
     onChangeZoom,
     onSetSidebar,
@@ -32,12 +28,10 @@
     rememberSidebarTrigger,
     onSavePosition,
     onPdfPosition,
-    onSelection,
     onSourceSelect,
     onSearchResults,
     onSaveOutline,
     onSaveDraft,
-    onStartIdea,
     onCreateIdea,
     onPersistPreferences,
   }: {
@@ -52,10 +46,6 @@
     sidebarWidth: number;
     search: string;
     searchResults: SearchResult[];
-    excerpt: string;
-    comment: string;
-    ideaDraftId: string;
-    ideaFormulation: string;
     saveState: "saved" | "saving" | "error";
     onChangeZoom: (delta: number) => void;
     onSetSidebar: (tab: Exclude<ReaderSidebar, null>) => void;
@@ -63,15 +53,19 @@
     rememberSidebarTrigger: (node: HTMLButtonElement) => () => void;
     onSavePosition: (page?: number) => Promise<void>;
     onPdfPosition: (page: number, scroll: number) => void;
-    onSelection: (fragments: SourceFragment[]) => void;
-    onSourceSelect: (source: SourceFragment) => void;
+    onSourceSelect: (draftId: string, source: SourceFragment) => void;
     onSearchResults: (results: SearchResult[]) => void;
     onSaveOutline: (outline: OutlineItem[]) => void;
-    onSaveDraft: () => Promise<string | null>;
-    onStartIdea: () => Promise<void>;
-    onCreateIdea: () => Promise<void>;
+    onSaveDraft: (excerpt: string, comment: string, fragments: SourceFragment[]) => Promise<string | null>;
+    onCreateIdea: (draftId: string, formulation: string) => Promise<boolean>;
     onPersistPreferences: () => Promise<void>;
   } = $props();
+
+  let excerpt = $state("");
+  let comment = $state("");
+  let fragments = $state<SourceFragment[]>([]);
+  let ideaDraftId = $state("");
+  let ideaFormulation = $state("");
 
   const tabs: { id: Exclude<ReaderSidebar, null>; label: string; icon: typeof StickyNote }[] = [
     { id: "note", label: "Заметка", icon: StickyNote },
@@ -79,6 +73,13 @@
     { id: "search", label: "Поиск", icon: Search },
   ];
   const captureAllowed = $derived(selectedBook?.studyStatus !== "completed");
+  const currentChapter = $derived.by(
+    () =>
+      (selectedBook?.outline ?? [])
+        .filter((item) => item.page <= page)
+        .toSorted((a, b) => b.page - a.page)
+        .at(0)?.title ?? "Без раздела",
+  );
 
   async function selectDocumentMode(nextMode: DocumentMode) {
     mode = nextMode;
@@ -89,7 +90,47 @@
     images = !images;
     await onPersistPreferences();
   }
+
+  function captureSelection(selection: SourceFragment[]) {
+    const first = selection[0];
+    if (!first) return;
+    page = first.page;
+    fragments = selection;
+    excerpt = selection.map((fragment) => fragment.excerpt).join("\n");
+    onSetSidebar("note");
+  }
+
+  async function saveDraft() {
+    const draftId = await onSaveDraft(excerpt, comment, fragments);
+    if (draftId) {
+      excerpt = "";
+      comment = "";
+      fragments = [];
+    }
+    return draftId;
+  }
+
+  async function startIdea() {
+    const draftId = await saveDraft();
+    if (draftId) ideaDraftId = draftId;
+  }
+
+  async function createIdea() {
+    if (await onCreateIdea(ideaDraftId, ideaFormulation)) {
+      ideaDraftId = "";
+      ideaFormulation = "";
+    }
+  }
 </script>
+
+<svelte:window
+  onkeydown={(event) => {
+    if (event.ctrlKey && event.key === "Enter" && sidebar === "note") {
+      event.preventDefault();
+      void saveDraft();
+    }
+  }}
+/>
 
 <div class="flex h-screen flex-col overflow-hidden bg-night text-mist" data-testid="reader-ready">
   <header class="z-20 flex min-h-16 items-center gap-3 border-b border-white/8 bg-graphite px-4">
@@ -101,10 +142,10 @@
     >
     <div class="min-w-0">
       <b class="block truncate text-sm">{selectedBook?.title ?? "Режим чтения"}</b><small
-        class="block truncate text-mist-dim">Глава 5 · Репликация</small
+        class="block truncate text-mist-dim">{currentChapter}</small
       >
     </div>
-    <span class="ml-4 font-mono text-xs text-mist-dim">стр. {page} / 612</span>
+    <span class="ml-4 font-mono text-xs text-mist-dim">стр. {page} / {selectedBook?.pageCount ?? "—"}</span>
     <div class="ml-auto flex items-center gap-1">
       <div
         class="mr-2 flex items-center rounded-md border border-white/10 p-0.5"
@@ -146,9 +187,13 @@
         aria-label="Поиск в книге"
         class="ml-2 grid size-10 place-items-center rounded-md hover:bg-slate"
         onclick={() => onSetSidebar("search")}><Search class="size-4" /></button
-      ><span role="status" class="ml-2 w-24 font-mono text-[11px] text-mist-dim"
-        >{saveState === "saving" ? "Сохранение…" : saveState === "error" ? "Не сохранено" : "Сохранено"}</span
-      ><button
+      >{#if saveState === "error"}<span role="status" class="ml-2 font-mono text-[11px] text-danger">Не сохранено</span
+        ><button
+          class="rounded px-2 py-1 font-mono text-[11px] text-danger hover:bg-danger/10"
+          onclick={() => onSavePosition()}>Повторить сохранение</button
+        >{:else}<span role="status" class="ml-2 w-24 font-mono text-[11px] text-mist-dim"
+          >{saveState === "saving" ? "Сохранение…" : "Сохранено"}</span
+        >{/if}<button
         {@attach rememberSidebarTrigger}
         aria-label="Показать инструменты чтения"
         aria-expanded={sidebar !== null}
@@ -171,7 +216,7 @@
           {mode}
           invertImages={images}
           onPosition={onPdfPosition}
-          {onSelection}
+          onSelection={captureSelection}
           searchQuery={search}
           onSearchResults={(results) => {
             searchResults = results;
@@ -179,7 +224,7 @@
           }}
           sources={library?.drafts
             .filter((draft) => draft.bookId === selectedBook?.id)
-            .flatMap((draft) => draft.fragments) ?? []}
+            .flatMap((draft) => draft.fragments.map((fragment) => ({ draftId: draft.id, fragment }))) ?? []}
           {onSourceSelect}
           onOutline={onSaveOutline}
         />
@@ -271,9 +316,9 @@
                   id="reader-comment"
                   label="Моя мысль (необязательно)"
                   bind:value={comment}
-                /><Button variant="primary" onclick={onSaveDraft} disabled={!captureAllowed || !excerpt.trim()}
+                /><Button variant="primary" onclick={saveDraft} disabled={!captureAllowed || !excerpt.trim()}
                   >В черновики · Ctrl+Enter</Button
-                ><Button onclick={onStartIdea} disabled={!captureAllowed || !excerpt.trim()}>Оформить как идею</Button>
+                ><Button onclick={startIdea} disabled={!captureAllowed || !excerpt.trim()}>Оформить как идею</Button>
                 {#if ideaDraftId}<div class="rounded-lg border border-iris/30 bg-iris/8 p-4">
                     <TextArea
                       id="reader-idea-formulation"
@@ -281,7 +326,7 @@
                       bind:value={ideaFormulation}
                       required
                     />
-                    <Button variant="primary" onclick={onCreateIdea} disabled={!ideaFormulation.trim()}
+                    <Button variant="primary" onclick={createIdea} disabled={!ideaFormulation.trim()}
                       >Создать идею</Button
                     >
                     <p class="mt-3 text-xs leading-5 text-mist-dim">

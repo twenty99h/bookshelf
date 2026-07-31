@@ -7,8 +7,20 @@ use lopdf::{Bookmark, Document, Object, Stream};
 fn main() {
     let mut document = Document::with_version("1.7");
     let pages_id = document.new_object_id();
+    let embedded_font_file = document.add_object(Stream::new(
+        dictionary! { "Length1" => 8 },
+        b"BOOKFONT".to_vec(),
+    ));
+    let font_descriptor = document.add_object(dictionary! {
+        "Type" => "FontDescriptor", "FontName" => "BookshelfCorpusFont", "Flags" => 32,
+        "FontBBox" => vec![0.into(), (-200).into(), 1000.into(), 900.into()],
+        "ItalicAngle" => 0, "Ascent" => 800, "Descent" => -200, "CapHeight" => 700,
+        "StemV" => 80, "FontFile2" => embedded_font_file,
+    });
     let font_id = document.add_object(dictionary! {
-        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding",
+        "Type" => "Font", "Subtype" => "TrueType", "BaseFont" => "BookshelfCorpusFont",
+        "Encoding" => "WinAnsiEncoding", "FirstChar" => 32, "LastChar" => 255,
+        "Widths" => vec![600.into(); 224], "FontDescriptor" => font_descriptor,
     });
     let image_id = document.add_object(Stream::new(
         dictionary! {
@@ -79,6 +91,82 @@ fn main() {
             Operation::new("Do", vec!["Im1".into()]),
             Operation::new("Q", vec![]),
         ]);
+        if index == 0 {
+            operations.extend([
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 10.into()]),
+                Operation::new(
+                    "Tm",
+                    vec![
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        320.into(),
+                        380.into(),
+                    ],
+                ),
+                Operation::new("Tj", vec![Object::string_literal("COLUMN_RIGHT")]),
+                Operation::new(
+                    "Tm",
+                    vec![
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        72.into(),
+                        380.into(),
+                    ],
+                ),
+                Operation::new("Tj", vec![Object::string_literal("COLUMN_LEFT")]),
+                Operation::new(
+                    "Tm",
+                    vec![
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        72.into(),
+                        350.into(),
+                    ],
+                ),
+                Operation::new(
+                    "Tj",
+                    vec![Object::string_literal("FORMULA_SUM: sigma(i=1..n) x_i")],
+                ),
+                Operation::new(
+                    "Tm",
+                    vec![
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        72.into(),
+                        310.into(),
+                    ],
+                ),
+                Operation::new(
+                    "Tj",
+                    vec![Object::string_literal("VISUAL_SECOND_STORED_FIRST")],
+                ),
+                Operation::new(
+                    "Tm",
+                    vec![
+                        1.into(),
+                        0.into(),
+                        0.into(),
+                        1.into(),
+                        72.into(),
+                        330.into(),
+                    ],
+                ),
+                Operation::new(
+                    "Tj",
+                    vec![Object::string_literal("VISUAL_FIRST_STORED_SECOND")],
+                ),
+                Operation::new("ET", vec![]),
+            ]);
+        }
         let content = Content { operations };
         let mut stream = Stream::new(dictionary! {}, content.encode().unwrap());
         stream.compress().unwrap();
@@ -116,6 +204,15 @@ fn main() {
             .as_dict_mut()
             .unwrap()
             .set("Outlines", outline_id);
+        if let Some(destination) = document.objects.values_mut().find_map(|object| {
+            object
+                .as_dict_mut()
+                .ok()
+                .and_then(|dictionary| dictionary.get_mut(b"D").ok())
+                .and_then(|value| value.as_array_mut().ok())
+        }) {
+            destination[0] = Object::Reference((999, 0));
+        }
     }
     document.compress();
     let output = std::env::args()

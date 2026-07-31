@@ -1,15 +1,16 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { FileArchive, Library, Menu, Sparkles } from "@lucide/svelte";
   import { Button, CheckboxField, SelectField, TextField } from "@/shared/ui";
+  import type { LibraryState } from "@/shared/api";
 
   type SettingsSection = "interface" | "library" | "backups" | "ai";
 
   let {
     section = $bindable(),
+    library,
     readerMode = $bindable(),
     readerImages = $bindable(),
-    backupPassword = $bindable(),
-    backupStatus,
     updateStatus,
     diagnosticStatus,
     onRestoreBackup,
@@ -20,19 +21,58 @@
     onPersistPreferences,
   }: {
     section: SettingsSection;
+    library: LibraryState;
     readerMode: string;
     readerImages: boolean;
-    backupPassword: string;
-    backupStatus: string;
     updateStatus: string;
     diagnosticStatus: string;
-    onRestoreBackup: () => Promise<void>;
-    onExportArchive: () => Promise<void>;
-    onImportArchive: () => Promise<void>;
+    onRestoreBackup: () => Promise<string>;
+    onExportArchive: (password: string) => Promise<string>;
+    onImportArchive: (password: string) => Promise<string>;
     onExportDiagnostics: () => Promise<void>;
     onCheckForUpdate: () => Promise<void>;
     onPersistPreferences: () => Promise<void>;
   } = $props();
+
+  let backupPassword = $state("");
+  let backupStatus = $state("");
+  let lastArchiveAt = $state<number | null>(null);
+  const snapshotAt = $derived(Math.max(0, ...library.milestones.map((milestone) => milestone.occurredAt)) || null);
+  const changesSinceArchive = $derived(
+    library.milestones.filter((milestone) => !lastArchiveAt || milestone.occurredAt > lastArchiveAt).length,
+  );
+  const archiveIsOld = $derived(!lastArchiveAt || Date.now() / 1_000 - lastArchiveAt > 30 * 86_400);
+  const shouldPromptExport = $derived(changesSinceArchive >= 5 || (archiveIsOld && changesSinceArchive > 0));
+
+  onMount(() => {
+    const stored = Number(localStorage.getItem("bookshelf-last-archive-at"));
+    lastArchiveAt = stored > 0 ? stored : null;
+  });
+
+  function formatDate(timestamp: number | null) {
+    return timestamp
+      ? new Intl.DateTimeFormat("ru-RU", { dateStyle: "long", timeStyle: "short" }).format(new Date(timestamp * 1_000))
+      : "ещё не создавалась";
+  }
+
+  async function restoreBackup() {
+    backupStatus = "Восстановление…";
+    backupStatus = await onRestoreBackup();
+  }
+
+  async function exportArchive() {
+    backupStatus = "Экспорт…";
+    backupStatus = await onExportArchive(backupPassword);
+    if (backupStatus === "Переносимый архив сохранён") {
+      lastArchiveAt = Math.floor(Date.now() / 1_000);
+      localStorage.setItem("bookshelf-last-archive-at", String(lastArchiveAt));
+    }
+  }
+
+  async function importArchive() {
+    backupStatus = "Импорт…";
+    backupStatus = await onImportArchive(backupPassword);
+  }
 
   const navigation = [
     { id: "interface" as const, icon: Menu, label: "Интерфейс" },
@@ -99,22 +139,31 @@
             <p class="font-mono text-xs uppercase tracking-[.14em] text-amber">Резервные копии</p>
             <h2 class="mt-3 text-xl font-semibold">Локальное восстановление</h2>
           </div>
-          <span class="font-mono text-xs text-success">Snapshot сегодня, 18:40</span>
+          <span class="font-mono text-xs text-success">Snapshot: {formatDate(snapshotAt)}</span>
         </div>
+        {#if shouldPromptExport}<p
+            class="mt-5 rounded-lg border border-amber/35 bg-amber/10 p-4 text-sm text-amber"
+            role="status"
+          >
+            После последнего архива накопились существенные изменения или архив давно не создавался. Сохраните
+            переносимую копию, когда будет удобно.
+          </p>{/if}
         <div class="mt-6 grid grid-cols-2 gap-4">
           <div class="rounded-lg border border-white/8 bg-night/30 p-5">
             <b>Автоматический snapshot</b>
-            <p class="mt-2 text-sm leading-6 text-mist-dim">Последняя внутренняя копия: 30 июля 2026, 18:40.</p>
-            <Button onclick={onRestoreBackup}>Восстановить последний</Button>
+            <p class="mt-2 text-sm leading-6 text-mist-dim">Последняя внутренняя копия: {formatDate(snapshotAt)}.</p>
+            <Button onclick={restoreBackup}>Восстановить последний</Button>
           </div>
           <div class="rounded-lg border border-white/8 bg-night/30 p-5">
             <b>Переносимый архив</b>
-            <p class="mt-2 text-sm leading-6 text-mist-dim">Последний экспорт: 12 июля 2026. Архив защищён паролем.</p>
+            <p class="mt-2 text-sm leading-6 text-mist-dim">
+              Последний экспорт: {formatDate(lastArchiveAt)}. Архив защищён паролем.
+            </p>
             <TextField id="backup-password" label="Пароль архива" type="password" bind:value={backupPassword} />
             <div class="flex gap-2">
-              <Button disabled={!backupPassword} onclick={onExportArchive}>Экспортировать</Button><Button
+              <Button disabled={!backupPassword} onclick={exportArchive}>Экспортировать</Button><Button
                 disabled={!backupPassword}
-                onclick={onImportArchive}>Импортировать</Button
+                onclick={importArchive}>Импортировать</Button
               >
             </div>
           </div>

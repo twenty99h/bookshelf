@@ -108,11 +108,14 @@ test("cross-page PDF selection saves distinct excerpts and restores both source 
   await expect(markers).toHaveCount(2);
   await expect(page.locator('[data-source-highlight="true"]').first()).toBeVisible();
   await markers.first().click();
-  await expect(page.getByLabel("Фрагмент книги")).toHaveValue(expected[0] ?? "");
+  await expect(page).toHaveURL(/\/drafts\?draft=/);
+  await expect(page.getByRole("heading", { name: "Сформулируйте самостоятельную идею" })).toBeVisible();
+  await expect(page.locator("blockquote").first()).toContainText(expected[0] ?? "");
 });
 
 test("permanent book deletion enumerates consequences and removes the PDF-owned state", async ({ page }) => {
   await new AppPage(page).open("/library/book-domain");
+  await page.getByRole("button", { name: "Другие действия" }).click();
   await page.getByRole("button", { name: "Удалить навсегда" }).click();
   const dialog = page.getByRole("dialog", { name: "Удалить книгу навсегда?" });
   await expect(dialog).toContainText(/сохранённый PDF/i);

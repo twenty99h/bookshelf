@@ -3,8 +3,10 @@
   import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
   import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
   import type { OutlineItem, SourceFragment } from "@/shared/api";
-  import { extractPdfSelection } from "../lib/pdf-selection";
+  import { extractPdfSelection } from "../../lib/pdf-selection";
   import PdfPage from "./PdfPage.svelte";
+
+  type SavedSource = { draftId: string; fragment: SourceFragment };
 
   let {
     url,
@@ -32,8 +34,8 @@
     onOutline: (outline: OutlineItem[]) => void;
     searchQuery: string;
     onSearchResults: (results: { page: number; excerpt: string }[]) => void;
-    sources: SourceFragment[];
-    onSourceSelect: (source: SourceFragment) => void;
+    sources: SavedSource[];
+    onSourceSelect: (draftId: string, source: SourceFragment) => void;
   } = $props();
 
   let loadingTask: PDFDocumentLoadingTask | null = null;
@@ -186,7 +188,7 @@
           {zoom}
           {mode}
           {invertImages}
-          sources={sources.filter((source) => source.page === page)}
+          sources={sources.filter((source) => source.fragment.page === page)}
           {onSourceSelect}
         />{/each}
     </div>

@@ -1,17 +1,18 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibraryAction, LibraryState } from "@/shared/api";
-import { activeLibraryFixture } from "@/features/workspace";
+import { activeLibraryFixture } from "../model/workspace-fixtures";
 import WorkspacePage from "./WorkspacePage.svelte";
 
 vi.mock("@lucide/svelte", async () => {
-  const { default: Icon } = await import("@/features/workspace/ui/IconStub.test.svelte");
+  const { default: Icon } = await import("./IconStub.test.svelte");
   return {
     ArrowLeft: Icon,
     BookOpen: Icon,
     BookCopy: Icon,
     Brain: Icon,
     Check: Icon,
+    ChevronDown: Icon,
     ChevronRight: Icon,
     Command: Icon,
     FileArchive: Icon,
@@ -38,8 +39,8 @@ const bookUrl = vi.fn(async () => null);
 const commandFactory = vi.hoisted(() => vi.fn());
 let state: LibraryState;
 
-vi.mock("@/features/workspace", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/features/workspace")>()),
+vi.mock("../api/workspace-commands", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/workspace-commands")>()),
   createWorkspaceCommands: commandFactory,
 }));
 
@@ -80,6 +81,33 @@ describe("workspace page behavior", () => {
     await waitFor(() => expect(screen.getByText(/selectively simplified/i)).toBeTruthy());
   });
 
+  it("selects a draft from the list and shows every source fragment", async () => {
+    render(WorkspacePage, { props: { context: "drafts" } });
+    await screen.findByText(/conflict resolution happens on the leader/i);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Все заметки" }));
+    const target = screen.getByText(/transactions are an abstraction layer/i).closest("article")!;
+    await fireEvent.click(within(target).getByRole("button", { name: "Разобрать" }));
+
+    expect(screen.getByText("Transactions are an abstraction layer")).toBeTruthy();
+    expect(screen.getByText("certain concurrency problems do not exist")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Присоединить к выбранной идее" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("selects any listed experiment for editing", async () => {
+    render(WorkspacePage, { props: { context: "practice" } });
+    await screen.findByRole("heading", { name: "Перепроектирование журнала конфигурации сервиса" });
+
+    await fireEvent.click(screen.getByRole("button", { name: /Сокращение цикла обратной связи при рефакторинге/ }));
+
+    expect(screen.getByRole("heading", { name: "Сокращение цикла обратной связи при рефакторинге" })).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Наблюдаемый результат" }) as HTMLTextAreaElement).value).toBe(
+      "Отрицательный результат выявил слишком крупный первый шаг",
+    );
+  });
+
   it("keeps an opening failure local to the recoverable library screen", async () => {
     commandFactory.mockRejectedValueOnce(new Error("Хранилище недоступно"));
 
@@ -116,6 +144,26 @@ describe("workspace page behavior", () => {
     );
   });
 
+  it("shows persisted reader metadata and retries a failed position save", async () => {
+    const book = state.books.find((item) => item.id === "book-distributed")!;
+    book.pageCount = 700;
+    book.outline = [{ id: "outline", title: "Проверяемая глава", page: 280, parentId: null }];
+    execute.mockRejectedValueOnce(new Error("Диск временно недоступен")).mockResolvedValue(structuredClone(state));
+
+    render(WorkspacePage, { props: { context: "reader", resourceId: book.id } });
+
+    await screen.findByText(book.title);
+    expect(screen.getByText("Проверяемая глава")).toBeTruthy();
+    expect(screen.getByText(/стр\. 286 \/ 700/)).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Увеличить масштаб" }));
+    expect(await screen.findByText("Не сохранено")).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Повторить сохранение" }));
+
+    await waitFor(() => expect(screen.getByText("Сохранено")).toBeTruthy());
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("derives dashboard and book progress from persisted state", async () => {
     const book = state.books.find((item) => item.id === "book-distributed")!;
     book.farthestPage = 333;
@@ -138,5 +186,32 @@ describe("workspace page behavior", () => {
     render(WorkspacePage, { props: { context: "book", resourceId: book.id } });
     await screen.findByRole("heading", { name: book.title, level: 2 });
     expect(screen.getAllByText("333").length).toBeGreaterThan(0);
+  });
+
+  it("uses addressable book tabs and keeps destructive actions in the overflow menu", async () => {
+    const book = state.books.find((item) => item.id === "book-distributed")!;
+    book.outline = [];
+    render(WorkspacePage, { props: { context: "book", resourceId: book.id } });
+    await screen.findByRole("heading", { name: book.title, level: 2 });
+
+    expect(screen.getByText(/без оглавления · есть текстовый слой/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Черновики" }).getAttribute("href")).toContain(`book=${book.id}`);
+    expect(screen.queryByRole("button", { name: "Удалить навсегда" })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Другие действия" }));
+    expect(screen.getByRole("button", { name: "Архивировать" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Удалить навсегда" })).toBeTruthy();
+  });
+
+  it("derives backup dates and export prompting from persisted activity", async () => {
+    localStorage.removeItem("bookshelf-last-archive-at");
+    render(WorkspacePage, { props: { context: "settings" } });
+
+    await screen.findByRole("heading", { name: "Чтение и рабочее пространство" });
+    await fireEvent.click(screen.getByRole("button", { name: "Резервные копии" }));
+
+    expect(screen.queryByText(/30 июля 2026, 18:40/)).toBeNull();
+    expect(screen.getByText(/существенные изменения или архив давно не создавался/i)).toBeTruthy();
+    expect(screen.getByText(/последняя внутренняя копия:/i).textContent).not.toContain("ещё не создавалась");
   });
 });

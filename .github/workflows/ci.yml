@@ -31,6 +31,7 @@ jobs:
           path: |
             test-results/playwright
             playwright-report
+            e2e/snapshots
 
   rust:
     runs-on: ubuntu-latest
