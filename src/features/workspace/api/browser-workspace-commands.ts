@@ -78,7 +78,7 @@ export const browserWorkspaceCommands: WorkspaceCommands = {
     }
     for (const material of state.materials) {
       if (`${material.title} ${material.idea}`.toLocaleLowerCase("ru").includes(needle))
-        results.push({ id: material.id, kind: "material", title: material.title, context: "Материал" });
+        results.push({ id: material.id, kind: "material", title: material.title, context: "Материал для передачи" });
     }
     return results;
   },
@@ -160,6 +160,7 @@ function applyAction(action: LibraryAction) {
       break;
     }
     case "captureDraft":
+      ensureBookAllowsCapture(action.bookId);
       state.drafts.unshift({
         id: `draft-${String(state.drafts.length + 1).padStart(3, "0")}`,
         bookId: action.bookId,
@@ -173,6 +174,7 @@ function applyAction(action: LibraryAction) {
       });
       break;
     case "captureDraftSources": {
+      ensureBookAllowsCapture(action.bookId);
       const first = action.fragments[0];
       if (!first) break;
       state.drafts.unshift({
@@ -246,6 +248,20 @@ function applyAction(action: LibraryAction) {
       }
       break;
     }
+    case "startRepeatStudy": {
+      const book = state.books.find((item) => item.id === action.bookId);
+      if (book) {
+        book.studyStatus = "repeating";
+        book.studyCycles.push({
+          id: `study-cycle-${book.id}-${book.studyCycles.length + 1}`,
+          startedAt: 1_785_283_200,
+          completedAt: null,
+          retrospective: null,
+        });
+        state.activeStudyBookId = book.id;
+      }
+      break;
+    }
     case "archiveBook": {
       const book = state.books.find((item) => item.id === action.bookId);
       if (book) {
@@ -310,6 +326,21 @@ function applyAction(action: LibraryAction) {
       });
       break;
     }
+    case "createExperiment": {
+      if (!action.situation.trim() || !action.action.trim()) throw new Error("Опишите ситуацию и проверяемое действие");
+      state.experiments.push({
+        id: `experiment-${state.experiments.length + 1}`,
+        ideaId: action.ideaId,
+        situation: action.situation,
+        action: action.action,
+        result: "",
+        conclusion: "",
+        status: "intent",
+        cancellationReason: "",
+        nextStep: action.nextStep,
+      });
+      break;
+    }
     case "deleteBook": {
       const ideaIds = new Set(state.ideas.filter((idea) => idea.bookId === action.bookId).map((idea) => idea.id));
       state.books = state.books.filter((book) => book.id !== action.bookId);
@@ -336,9 +367,17 @@ function applyAction(action: LibraryAction) {
       }
       break;
     }
+    case "rescheduleRecall": {
+      const recall = state.recalls.find((item) => item.id === action.recallId);
+      if (recall) recall.nextAt = action.nextAt;
+      break;
+    }
     case "advanceExperiment": {
       const experiment = state.experiments.find((item) => item.id === action.experimentId);
       if (experiment) {
+        if (!validExperimentTransition(experiment.status, action.status)) {
+          throw new Error("Выберите следующий допустимый этап эксперимента");
+        }
         experiment.status = action.status;
         experiment.situation = action.situation;
         experiment.action = action.action;
@@ -371,5 +410,25 @@ function applyAction(action: LibraryAction) {
       if (state.activeStudyBookId === action.bookId) state.activeStudyBookId = null;
       break;
     }
+  }
+}
+
+function validExperimentTransition(from: string, to: string) {
+  if (from === to) return !["completed", "cancelled"].includes(from);
+  return [
+    "intent:running",
+    "intent:cancelled",
+    "running:reviewing",
+    "running:cancelled",
+    "reviewing:running",
+    "reviewing:completed",
+    "reviewing:cancelled",
+  ].includes(`${from}:${to}`);
+}
+
+function ensureBookAllowsCapture(bookId: string) {
+  const book = state.books.find((item) => item.id === bookId);
+  if (book?.studyStatus === "completed") {
+    throw new Error("Начните повторное изучение, чтобы создавать новые черновые заметки");
   }
 }

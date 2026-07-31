@@ -6,6 +6,7 @@
   import { ContinuousPdfReader } from "@/features/workspace";
 
   type ReaderSidebar = "note" | "outline" | "search" | null;
+  type DocumentMode = "muted" | "original" | "dark";
   type SearchResult = { page: number; excerpt: string };
 
   let {
@@ -45,7 +46,7 @@
     documentUrl: string | null;
     page: number;
     zoom: number;
-    mode: string;
+    mode: DocumentMode;
     images: boolean;
     sidebar: ReaderSidebar;
     sidebarWidth: number;
@@ -77,6 +78,17 @@
     { id: "outline", label: "Оглавление", icon: ListTree },
     { id: "search", label: "Поиск", icon: Search },
   ];
+  const captureAllowed = $derived(selectedBook?.studyStatus !== "completed");
+
+  async function selectDocumentMode(nextMode: DocumentMode) {
+    mode = nextMode;
+    await onPersistPreferences();
+  }
+
+  async function toggleImageInversion() {
+    images = !images;
+    await onPersistPreferences();
+  }
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden bg-night text-mist" data-testid="reader-ready">
@@ -94,6 +106,34 @@
     </div>
     <span class="ml-4 font-mono text-xs text-mist-dim">стр. {page} / 612</span>
     <div class="ml-auto flex items-center gap-1">
+      <div
+        class="mr-2 flex items-center rounded-md border border-white/10 p-0.5"
+        role="group"
+        aria-label="Режим документа"
+      >
+        <button
+          aria-label="Приглушённый светлый режим"
+          aria-pressed={mode === "muted"}
+          class="min-h-8 rounded px-2 text-xs text-mist-dim aria-pressed:bg-white/10 aria-pressed:text-mist"
+          onclick={() => selectDocumentMode("muted")}>Светлый</button
+        ><button
+          aria-label="Оригинальный режим"
+          aria-pressed={mode === "original"}
+          class="min-h-8 rounded px-2 text-xs text-mist-dim aria-pressed:bg-white/10 aria-pressed:text-mist"
+          onclick={() => selectDocumentMode("original")}>Оригинал</button
+        ><button
+          aria-label="Тёмный инвертированный режим"
+          aria-pressed={mode === "dark"}
+          class="min-h-8 rounded px-2 text-xs text-mist-dim aria-pressed:bg-white/10 aria-pressed:text-mist"
+          onclick={() => selectDocumentMode("dark")}>Тёмный</button
+        >
+      </div>
+      <button
+        aria-label={images ? "Не инвертировать изображения" : "Инвертировать изображения"}
+        aria-pressed={images}
+        class="min-h-9 rounded-md border border-white/10 px-2 text-xs text-mist-dim aria-pressed:text-amber"
+        onclick={toggleImageInversion}>Схемы</button
+      >
       <button
         aria-label="Уменьшить масштаб"
         class="grid size-10 place-items-center rounded-md hover:bg-slate"
@@ -128,7 +168,7 @@
           initialPage={page}
           initialScroll={selectedBook?.reading.scroll ?? 0}
           {zoom}
-          mode={mode as "muted" | "original" | "dark"}
+          {mode}
           invertImages={images}
           onPosition={onPdfPosition}
           {onSelection}
@@ -220,18 +260,20 @@
               </p>
               <h2 class="mt-2 text-xl font-semibold">Черновая заметка</h2>
               <p class="mt-2 text-sm leading-6 text-mist-dim">
-                {selectedBook?.hasTextLayer
-                  ? "Выделите текст в документе. Источник сохранится отдельно от вашей мысли."
-                  : "В этом PDF нет текстового слоя. Укажите фрагмент вручную — заметка сохранится с явной страницей. OCR не выполняется."}
+                {!captureAllowed
+                  ? "Книга доступна для справочного чтения. Начните повторное изучение на странице книги, чтобы создавать новые черновые заметки."
+                  : selectedBook?.hasTextLayer
+                    ? "Выделите текст в документе. Источник сохранится отдельно от вашей мысли."
+                    : "В этом PDF нет текстового слоя. Укажите фрагмент вручную — заметка сохранится с явной страницей. OCR не выполняется."}
               </p>
               <div class="mt-5 grid gap-4">
                 <TextArea id="reader-excerpt" label="Фрагмент книги" bind:value={excerpt} required /><TextArea
                   id="reader-comment"
                   label="Моя мысль (необязательно)"
                   bind:value={comment}
-                /><Button variant="primary" onclick={onSaveDraft} disabled={!excerpt.trim()}
+                /><Button variant="primary" onclick={onSaveDraft} disabled={!captureAllowed || !excerpt.trim()}
                   >В черновики · Ctrl+Enter</Button
-                ><Button onclick={onStartIdea} disabled={!excerpt.trim()}>Оформить как идею</Button>
+                ><Button onclick={onStartIdea} disabled={!captureAllowed || !excerpt.trim()}>Оформить как идею</Button>
                 {#if ideaDraftId}<div class="rounded-lg border border-iris/30 bg-iris/8 p-4">
                     <TextArea
                       id="reader-idea-formulation"

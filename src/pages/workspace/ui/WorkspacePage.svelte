@@ -2,12 +2,13 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { BookCopy, Brain, Command, FlaskConical, Gauge, Library, Search, Settings, StickyNote } from "@lucide/svelte";
-  import { Button, DialogModal, TextArea, TextField } from "@/shared/ui";
+  import { BookCopy, Brain, Command, FlaskConical, Gauge, Library, Settings, StickyNote } from "@lucide/svelte";
+  import { Button, DialogModal, TextArea } from "@/shared/ui";
   import {
     commandErrorMessage,
     type Book,
     type CompletionWorkDecision,
+    type ExperimentStatus,
     type Idea,
     type IdeaAssignment,
     type IdeaRelation,
@@ -18,6 +19,7 @@
   } from "@/shared/api";
   import { createWorkspaceCommands, type WorkspaceCommands, type WorkspaceContext } from "@/features/workspace";
   import CompletionView from "./CompletionView.svelte";
+  import CommandPalette from "./CommandPalette.svelte";
   import DashboardView from "./DashboardView.svelte";
   import BookView from "./BookView.svelte";
   import DraftsView from "./DraftsView.svelte";
@@ -77,12 +79,20 @@
   let diagnosticEntries = $state<string[]>([]);
   let experimentNextStep = $state("");
   let experimentCancellationReason = $state("");
+  let experimentSituation = $state("");
+  let experimentAction = $state("");
+  let experimentResult = $state("");
+  let experimentConclusion = $state("");
+  let newExperimentIdeaId = $state("");
+  let newExperimentSituation = $state("");
+  let newExperimentAction = $state("");
+  let newExperimentNextStep = $state("");
 
   let readerSidebar = $state<"note" | "outline" | "search" | null>(null);
   let readerSidebarWidth = $state(400);
   let readerZoom = $state(1.15);
   let readerPage = $state(286);
-  let readerMode = $state("muted");
+  let readerMode = $state<"muted" | "original" | "dark">("muted");
   let readerImages = $state(true);
   let readerSearch = $state("");
   let readerSearchResults = $state<{ page: number; excerpt: string }[]>([]);
@@ -166,7 +176,7 @@
       selectedDraftId = query.get("draft") ?? "";
       selectedTopic = query.get("topic") ?? "all";
       if (selectedBook) {
-        readerPage = selectedBook.reading.page;
+        readerPage = Number(query.get("sourcePage")) || selectedBook.reading.page;
         readerZoom = selectedBook.reading.zoom;
         readerMode =
           selectedBook.reader.documentMode === "mutedLight"
@@ -193,6 +203,17 @@
         ideaAssignments = [...selectedIdea.assignments];
         relatedIdeaId = library.ideas.find((idea) => idea.id !== selectedIdea.id)?.id ?? "";
       }
+      const experiment = library.experiments[0];
+      if (experiment) {
+        experimentStep = experiment.status;
+        experimentSituation = experiment.situation;
+        experimentAction = experiment.action;
+        experimentResult = experiment.result;
+        experimentConclusion = experiment.conclusion;
+        experimentNextStep = experiment.nextStep;
+        experimentCancellationReason = experiment.cancellationReason;
+      }
+      newExperimentIdeaId = library.ideas.find((idea) => idea.assignments.includes("experiment"))?.id ?? "";
     } catch (cause) {
       error = commandErrorMessage(cause);
       recordDiagnostic("library-load", error);
@@ -201,7 +222,7 @@
     }
   });
 
-  async function run(action: LibraryAction, message = "Сохранено"): Promise<boolean> {
+  async function executeLibraryAction(action: LibraryAction, message = "Сохранено"): Promise<boolean> {
     if (!commands) return false;
     busy = true;
     error = "";
@@ -247,11 +268,19 @@
     else if (result.kind === "idea") goto(resolve("/knowledge/[ideaId]", { ideaId: result.id }));
     else if (result.kind === "topic") goto(resolve(`/knowledge?topic=${encodeURIComponent(result.id)}`));
     else if (result.kind === "draft") goto(resolve(`/drafts?draft=${encodeURIComponent(result.id)}`));
-    else if (result.kind === "material") goto(resolve(`/drafts?material=${encodeURIComponent(result.id)}`));
+    else if (result.kind === "material") {
+      const material = library?.materials.find((item) => item.id === result.id);
+      const idea = library?.ideas.find((item) => material?.ideaIds.includes(item.id));
+      const source = idea?.fragments[0];
+      if (idea && source)
+        goto(
+          resolve(`/reader/${encodeURIComponent(idea.bookId)}?sourcePage=${encodeURIComponent(String(source.page))}`),
+        );
+    }
   }
 
   function handleGlobalKeydown(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && context !== "reader") {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
       paletteOpen = true;
     }
@@ -288,7 +317,7 @@
 
   async function persistReaderPreferences() {
     if (!selectedBook || !commands) return;
-    await run(
+    await executeLibraryAction(
       {
         kind: "updateReaderPreferences",
         bookId: selectedBook.id,
@@ -305,9 +334,9 @@
   }
 
   async function saveReaderDraft(): Promise<string | null> {
-    if (!selectedBook || !readerExcerpt.trim()) return null;
+    if (!selectedBook || selectedBook.studyStatus === "completed" || !readerExcerpt.trim()) return null;
     const existingDraftIds = new Set(library?.drafts.map((draft) => draft.id) ?? []);
-    const saved = await run(
+    const saved = await executeLibraryAction(
       readerFragments.length
         ? {
             kind: "captureDraftSources",
@@ -344,7 +373,7 @@
     if (!readerIdeaDraftId || !readerIdeaFormulation.trim()) return;
     const draft = library?.drafts.find((item) => item.id === readerIdeaDraftId);
     if (!draft) return;
-    const created = await run(
+    const created = await executeLibraryAction(
       {
         kind: "resolveDraftAsIdea",
         draftId: draft.id,
@@ -352,7 +381,7 @@
         section: draft.section,
         assignments: [],
       },
-      "Идея сохранена; учебное назначение можно выбрать позже",
+      "Идея сохранена; назначение идеи можно выбрать позже",
     );
     if (created) {
       readerIdeaDraftId = "";
@@ -364,7 +393,7 @@
     if (!selectedBook) return;
     readerPage = page;
     saveState = "saving";
-    saveState = (await run(
+    saveState = (await executeLibraryAction(
       { kind: "updateReading", bookId: selectedBook.id, page, zoom: readerZoom, scroll: 0.32 },
       "",
     ))
@@ -396,14 +425,15 @@
   function savePdfPosition(page: number, scroll: number) {
     readerPage = page;
     saveState = "saving";
-    void run({ kind: "updateReading", bookId: selectedBook!.id, page, zoom: readerZoom, scroll }, "").then(
-      (saved) => (saveState = saved ? "saved" : "error"),
-    );
+    void executeLibraryAction(
+      { kind: "updateReading", bookId: selectedBook!.id, page, zoom: readerZoom, scroll },
+      "",
+    ).then((saved) => (saveState = saved ? "saved" : "error"));
   }
 
   async function resolveDraft() {
     if (!focusedDraft || !draftFormulation.trim()) return;
-    await run(
+    await executeLibraryAction(
       {
         kind: "resolveDraftAsIdea",
         draftId: focusedDraft.id,
@@ -419,7 +449,10 @@
   async function attachFocusedDraft() {
     const idea = library?.ideas.find((item) => item.bookId === focusedDraft?.bookId);
     if (!focusedDraft || !idea) return;
-    await run({ kind: "attachDraftToIdea", draftId: focusedDraft.id, ideaId: idea.id }, "Источник присоединён к идее");
+    await executeLibraryAction(
+      { kind: "attachDraftToIdea", draftId: focusedDraft.id, ideaId: idea.id },
+      "Источник присоединён к идее",
+    );
   }
 
   async function exportFocusedDraft() {
@@ -458,7 +491,7 @@
 
   async function saveIdea() {
     if (!selectedIdea || !ideaFormulation.trim() || ideaAssignments.length === 0) return;
-    await run(
+    await executeLibraryAction(
       {
         kind: "updateIdea",
         ideaId: selectedIdea.id,
@@ -477,7 +510,7 @@
 
   async function linkSelectedIdea() {
     if (!selectedIdea || !relatedIdeaId) return;
-    await run(
+    await executeLibraryAction(
       { kind: "linkIdeas", fromIdeaId: selectedIdea.id, toIdeaId: relatedIdeaId, relation: ideaRelation },
       "Связь идей подтверждена",
     );
@@ -485,7 +518,7 @@
 
   async function resolveIdeaReview(decision: Exclude<ReviewDecision, "pending">) {
     if (!selectedIdea) return;
-    const saved = await run(
+    const saved = await executeLibraryAction(
       {
         kind: "resolveReview",
         ideaId: selectedIdea.id,
@@ -518,37 +551,77 @@
   }
 
   async function completeRecall(rating: "confident" | "partial" | "notRecalled") {
-    const idea = library?.ideas[0];
+    const recall = library?.recalls[0];
+    const idea = library?.ideas.find((item) => item.id === recall?.ideaId);
     if (!idea || !recallAnswer.trim()) return;
-    await run(
+    await executeLibraryAction(
       { kind: "completeRecall", ideaId: idea.id, answer: recallAnswer, rating },
       "Решение восстановления сохранено",
     );
   }
 
-  async function advanceExperiment(status: "reviewing" | "completed" | "cancelled") {
+  async function rescheduleRecall(days: number) {
+    const recall = library?.recalls[0];
+    if (!recall) return;
+    await executeLibraryAction(
+      { kind: "rescheduleRecall", recallId: recall.id, nextAt: recall.nextAt + days * 86_400 },
+      `Следующее восстановление перенесено на ${days} дней`,
+    );
+  }
+
+  async function startRecallNow() {
+    const recall = library?.recalls[0];
+    if (!recall) return;
+    recallRevealed = false;
+    recallAnswer = "";
+    await executeLibraryAction(
+      { kind: "rescheduleRecall", recallId: recall.id, nextAt: Math.floor(Date.now() / 1_000) },
+      "Восстановление готово сейчас",
+    );
+  }
+
+  async function createExperiment() {
+    if (!newExperimentIdeaId || !newExperimentSituation.trim() || !newExperimentAction.trim()) return;
+    const created = await executeLibraryAction(
+      {
+        kind: "createExperiment",
+        ideaId: newExperimentIdeaId,
+        situation: newExperimentSituation,
+        action: newExperimentAction,
+        nextStep: newExperimentNextStep,
+      },
+      "Замысел эксперимента сохранён",
+    );
+    if (created) {
+      newExperimentSituation = "";
+      newExperimentAction = "";
+      newExperimentNextStep = "";
+    }
+  }
+
+  async function advanceExperiment(status: ExperimentStatus) {
     const experiment = library?.experiments[0];
     if (!experiment) return;
-    await run(
+    await executeLibraryAction(
       {
         kind: "advanceExperiment",
         experimentId: experiment.id,
         status,
-        situation: experiment.situation,
-        action: experiment.action,
-        result: experiment.result,
-        conclusion: experiment.conclusion,
+        situation: experimentSituation,
+        action: experimentAction,
+        result: experimentResult,
+        conclusion: experimentConclusion,
         cancellationReason: experimentCancellationReason,
         nextStep: experimentNextStep || experiment.nextStep,
       },
       "Состояние эксперимента сохранено",
     );
-    experimentStep = status === "reviewing" ? "review" : status;
+    experimentStep = status;
   }
 
   async function saveCompletionStep(nextStep: number) {
     if (!selectedBook) return;
-    await run(
+    await executeLibraryAction(
       {
         kind: "saveStudyCompletionDraft",
         draft: {
@@ -569,7 +642,7 @@
 
   async function finishStudy() {
     if (!selectedBook) return;
-    await run(
+    await executeLibraryAction(
       {
         kind: "completeStudy",
         bookId: selectedBook.id,
@@ -723,7 +796,7 @@
     onSearchResults={(results) => (readerSearchResults = results)}
     onSaveOutline={(outline) => {
       if (selectedBook && outline.length && selectedBook.outline.length === 0)
-        void run({ kind: "saveOutline", bookId: selectedBook.id, outline }, "");
+        void executeLibraryAction({ kind: "saveOutline", bookId: selectedBook.id, outline }, "");
     }}
     onSaveDraft={saveReaderDraft}
     onStartIdea={startReaderIdea}
@@ -811,7 +884,7 @@
                 {library}
                 {selectedBook}
                 {bookStatus}
-                onRun={run}
+                onRun={executeLibraryAction}
                 onDelete={() => (deleteBookOpen = true)}
               />
             {:else if context === "drafts"}<DraftsView
@@ -822,7 +895,7 @@
                 {busy}
                 onResolve={resolveDraft}
                 onAttach={attachFocusedDraft}
-                onRun={run}
+                onRun={executeLibraryAction}
                 onExport={exportFocusedDraft}
               />
             {:else if context === "knowledge" || context === "idea"}<KnowledgeView
@@ -844,9 +917,20 @@
                 bind:recallAnswer
                 bind:recallRevealed
                 {experimentStep}
+                bind:experimentSituation
+                bind:experimentAction
+                bind:experimentResult
+                bind:experimentConclusion
                 bind:experimentNextStep
                 bind:experimentCancellationReason
+                bind:newExperimentIdeaId
+                bind:newExperimentSituation
+                bind:newExperimentAction
+                bind:newExperimentNextStep
                 onCompleteRecall={completeRecall}
+                onRescheduleRecall={rescheduleRecall}
+                onStartRecallNow={startRecallNow}
+                onCreateExperiment={createExperiment}
                 onAdvanceExperiment={advanceExperiment}
               />
             {:else if context === "completion"}<CompletionView
@@ -860,7 +944,11 @@
                 workItems={completionWorkItems}
                 workDecisions={completionWorkDecisions}
                 onCompleteReading={async () => {
-                  if (selectedBook) await run({ kind: "completeReading", bookId: selectedBook.id }, "Чтение завершено");
+                  if (selectedBook)
+                    await executeLibraryAction(
+                      { kind: "completeReading", bookId: selectedBook.id },
+                      "Чтение завершено",
+                    );
                   await saveCompletionStep(2);
                 }}
                 onSaveStep={saveCompletionStep}
@@ -881,6 +969,7 @@
                 onImportArchive={importArchive}
                 onExportDiagnostics={exportDiagnostics}
                 onCheckForUpdate={checkForUpdate}
+                onPersistPreferences={persistReaderPreferences}
               />{/if}
           {/if}
         </div>
@@ -888,38 +977,6 @@
     </div>
   </div>
 
-  <DialogModal
-    bind:open={paletteOpen}
-    title="Быстрый переход"
-    description="Найдите книгу, идею, тему, черновик или материал."
-  >
-    {#snippet trigger()}<span class="sr-only">Открыть быстрый переход</span>{/snippet}
-    <form
-      class="grid gap-3"
-      onsubmit={(event) => {
-        event.preventDefault();
-        searchPalette();
-      }}
-    >
-      <TextField id="command-search" label="Поиск" bind:value={paletteQuery} placeholder="Название или формулировка" />
-      <Button type="submit">Найти</Button>
-    </form>
-    <div class="grid gap-1" aria-live="polite">
-      {#if paletteQuery && paletteResults.length === 0}<p class="text-sm text-mist-dim">
-          Совпадений нет. Измените запрос, введённый текст сохранён.
-        </p>{/if}
-      {#each paletteResults as result (`${result.kind}-${result.id}`)}
-        <button
-          class="flex items-center gap-3 rounded-lg border border-white/8 bg-slate p-3 text-left hover:border-iris/50"
-          onclick={() => openPaletteResult(result)}
-        >
-          <Search class="size-4 text-iris" /><span
-            ><b class="line-clamp-1">{result.title}</b><small class="block text-mist-dim">{result.context}</small></span
-          >
-        </button>
-      {/each}
-    </div>
-  </DialogModal>
   <DialogModal
     bind:open={codexReviewOpen}
     title="Проверка идеи Codex"
@@ -968,6 +1025,14 @@
       </div>{/if}
   </DialogModal>
 {/if}
+
+<CommandPalette
+  bind:open={paletteOpen}
+  bind:query={paletteQuery}
+  results={paletteResults}
+  onSearch={searchPalette}
+  onOpenResult={openPaletteResult}
+/>
 
 {#snippet navItem(
   itemContext: WorkspaceContext,

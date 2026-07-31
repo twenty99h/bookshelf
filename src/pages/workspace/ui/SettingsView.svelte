@@ -17,6 +17,7 @@
     onImportArchive,
     onExportDiagnostics,
     onCheckForUpdate,
+    onPersistPreferences,
   }: {
     section: SettingsSection;
     readerMode: string;
@@ -30,6 +31,7 @@
     onImportArchive: () => Promise<void>;
     onExportDiagnostics: () => Promise<void>;
     onCheckForUpdate: () => Promise<void>;
+    onPersistPreferences: () => Promise<void>;
   } = $props();
 
   const navigation = [
@@ -61,11 +63,15 @@
               { value: "original", label: "Оригинальный" },
               { value: "dark", label: "Тёмный инвертированный" },
             ]}
-            onValueChange={(value) => (readerMode = value)}
+            onValueChange={(value) => {
+              readerMode = value;
+              void onPersistPreferences();
+            }}
           /><CheckboxField
             id="invert-images"
             label="Инвертировать изображения в тёмном режиме"
             bind:checked={readerImages}
+            onCheckedChange={() => void onPersistPreferences()}
           />
         </div>
       </section>

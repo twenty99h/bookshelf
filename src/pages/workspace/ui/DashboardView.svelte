@@ -17,6 +17,31 @@
     busy: boolean;
     onImport: () => void;
   } = $props();
+
+  const latestMilestoneAt = $derived(Math.max(0, ...library.milestones.map((milestone) => milestone.occurredAt)));
+  const weekStart = $derived(Math.max(0, latestMilestoneAt - 7 * 86_400));
+  const weeklyMilestones = $derived(library.milestones.filter((milestone) => milestone.occurredAt >= weekStart));
+  const weeklyReadingPages = $derived(
+    weeklyMilestones
+      .filter((milestone) => milestone.kind === "readingProgress" && milestone.page !== null)
+      .map((milestone) => milestone.page!)
+      .toSorted((a, b) => a - b),
+  );
+  const weeklyReadingProgress = $derived(
+    weeklyReadingPages.length > 1 ? weeklyReadingPages.at(-1)! - weeklyReadingPages[0]! : 0,
+  );
+  const weeklyIdeaCount = $derived(weeklyMilestones.filter((milestone) => milestone.kind === "ideaFormulated").length);
+  const weeklyRecallCount = $derived(
+    weeklyMilestones.filter((milestone) => milestone.kind === "recallCompleted").length,
+  );
+  const weeklyExperimentCount = $derived(
+    weeklyMilestones.filter((milestone) => milestone.kind === "experimentAdvanced").length,
+  );
+  const weeklyRange = $derived.by(() => {
+    if (!latestMilestoneAt) return "Нет вех за неделю";
+    const format = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
+    return `${format.format(new Date(weekStart * 1_000))}–${format.format(new Date(latestMilestoneAt * 1_000))}`;
+  });
 </script>
 
 {#if library.books.length === 0}
@@ -65,7 +90,7 @@
         </div>
         <div class="mt-8 grid grid-cols-3 gap-6 border-t border-white/8 pt-6">
           {@render metric("Последняя позиция", `${activeBook?.reading.page}`, "страница")}
-          {@render metric("Пройдено по тексту", `${Math.max(activeBook?.reading.page ?? 0, 312)}`, "дальняя позиция")}
+          {@render metric("Пройдено по тексту", `${activeBook?.farthestPage ?? 0}`, "дальняя позиция")}
           {@render metric(
             "Черновики книги",
             `${library.drafts.filter((draft) => draft.bookId === activeBook?.id).length}`,
@@ -79,16 +104,16 @@
             <p class="font-mono text-xs uppercase tracking-[0.15em] text-mist-dim">Последние семь дней</p>
             <h2 class="mt-2 text-xl font-semibold">Текст переходит в знание</h2>
           </div>
-          <span class="font-mono text-xs text-mist-dim">24–30 июля</span>
+          <span class="font-mono text-xs text-mist-dim">{weeklyRange}</span>
         </div>
         <div class="mt-6 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-white/8 bg-white/8">
-          {@render weeklyCell("Текст", "+47 стр.", "Самая дальняя позиция")}{@render weeklyCell(
+          {@render weeklyCell("Текст", `+${weeklyReadingProgress} стр.`, "Самая дальняя позиция")}{@render weeklyCell(
             "Идеи",
-            "3",
+            `${weeklyIdeaCount}`,
             "Сформулировано",
-          )}{@render weeklyCell("Восстановления", "2", "Решения читателя")}{@render weeklyCell(
+          )}{@render weeklyCell("Восстановления", `${weeklyRecallCount}`, "Решения читателя")}{@render weeklyCell(
             "Практика",
-            "1",
+            `${weeklyExperimentCount}`,
             "Продвижение",
           )}
         </div>

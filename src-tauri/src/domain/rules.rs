@@ -102,7 +102,7 @@ impl LibraryState {
                 context,
                 comment,
             } => {
-                find_book(self, &book_id)?;
+                ensure_book_allows_capture(self, &book_id)?;
                 if excerpt.trim().is_empty() || page == 0 {
                     return Err(DomainError::new(
                         "draft_source_required",
@@ -138,7 +138,7 @@ impl LibraryState {
                 fragments,
                 comment,
             } => {
-                find_book(self, &book_id)?;
+                ensure_book_allows_capture(self, &book_id)?;
                 if fragments.is_empty()
                     || fragments
                         .iter()
@@ -454,6 +454,38 @@ impl LibraryState {
                     relation,
                 });
             }
+            LibraryAction::CreateExperiment {
+                idea_id,
+                situation,
+                action,
+                next_step,
+            } => {
+                let book_id = find_idea(self, &idea_id)?.book_id.clone();
+                if situation.trim().is_empty() || action.trim().is_empty() {
+                    return Err(DomainError::new(
+                        "experiment_intent_required",
+                        "Опишите ситуацию и проверяемое действие",
+                    ));
+                }
+                self.experiments.push(Experiment {
+                    id: make_id("experiment"),
+                    idea_id,
+                    situation,
+                    action,
+                    result: String::new(),
+                    conclusion: String::new(),
+                    status: ExperimentStatus::Intent,
+                    cancellation_reason: String::new(),
+                    next_step,
+                });
+                self.milestones.push(StudyMilestone {
+                    id: make_id("milestone"),
+                    book_id,
+                    kind: MilestoneKind::ExperimentAdvanced,
+                    occurred_at: timestamp,
+                    page: None,
+                });
+            }
             LibraryAction::CompleteExperiment {
                 idea_id,
                 situation,
@@ -505,6 +537,20 @@ impl LibraryState {
                 cancellation_reason,
                 next_step,
             } => {
+                let current_status = self
+                    .experiments
+                    .iter()
+                    .find(|item| item.id == experiment_id)
+                    .map(|item| item.status)
+                    .ok_or_else(|| {
+                        DomainError::new("experiment_not_found", "Эксперимент не найден")
+                    })?;
+                if !valid_experiment_transition(current_status, status) {
+                    return Err(DomainError::new(
+                        "experiment_transition_invalid",
+                        "Выберите следующий допустимый этап эксперимента",
+                    ));
+                }
                 if status == ExperimentStatus::Cancelled && cancellation_reason.trim().is_empty() {
                     return Err(DomainError::new(
                         "experiment_cancellation_reason_required",
@@ -526,6 +572,7 @@ impl LibraryState {
                         "Для завершения нужны ситуация, действие, наблюдаемый результат и вывод",
                     ));
                 }
+                let status_changed = current_status != status;
                 let idea_id = {
                     let experiment = self
                         .experiments
@@ -543,14 +590,16 @@ impl LibraryState {
                     experiment.next_step = next_step;
                     experiment.idea_id.clone()
                 };
-                let book_id = find_idea(self, &idea_id)?.book_id.clone();
-                self.milestones.push(StudyMilestone {
-                    id: make_id("milestone"),
-                    book_id,
-                    kind: MilestoneKind::ExperimentAdvanced,
-                    occurred_at: timestamp,
-                    page: None,
-                });
+                if status_changed {
+                    let book_id = find_idea(self, &idea_id)?.book_id.clone();
+                    self.milestones.push(StudyMilestone {
+                        id: make_id("milestone"),
+                        book_id,
+                        kind: MilestoneKind::ExperimentAdvanced,
+                        occurred_at: timestamp,
+                        page: None,
+                    });
+                }
             }
             LibraryAction::CompleteRecall {
                 idea_id,
@@ -829,4 +878,34 @@ impl LibraryState {
         }
         Ok(())
     }
+}
+
+fn valid_experiment_transition(from: ExperimentStatus, to: ExperimentStatus) -> bool {
+    if from == to {
+        return !matches!(
+            from,
+            ExperimentStatus::Completed | ExperimentStatus::Cancelled
+        );
+    }
+    matches!(
+        (from, to),
+        (ExperimentStatus::Intent, ExperimentStatus::Running)
+            | (ExperimentStatus::Intent, ExperimentStatus::Cancelled)
+            | (ExperimentStatus::Running, ExperimentStatus::Reviewing)
+            | (ExperimentStatus::Running, ExperimentStatus::Cancelled)
+            | (ExperimentStatus::Reviewing, ExperimentStatus::Running)
+            | (ExperimentStatus::Reviewing, ExperimentStatus::Completed)
+            | (ExperimentStatus::Reviewing, ExperimentStatus::Cancelled)
+    )
+}
+
+fn ensure_book_allows_capture(state: &LibraryState, book_id: &str) -> Result<(), DomainError> {
+    let book = find_book(state, book_id)?;
+    if book.study_status == StudyStatus::Completed {
+        return Err(DomainError::new(
+            "study_reactivation_required",
+            "Начните повторное изучение, чтобы создавать новые черновые заметки",
+        ));
+    }
+    Ok(())
 }

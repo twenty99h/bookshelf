@@ -35,3 +35,9 @@
   color: transparent;
   background: color-mix(in srgb, #d6a24a, transparent 55%);
 }
+
+.textLayer [data-source-highlight="true"] {
+  background: rgb(214 162 74 / 28%);
+  box-shadow: 0 0 0 1px rgb(214 162 74 / 42%);
+  border-radius: 2px;
+}

@@ -499,6 +499,12 @@ pub enum LibraryAction {
         to_idea_id: String,
         relation: IdeaRelation,
     },
+    CreateExperiment {
+        idea_id: String,
+        situation: String,
+        action: String,
+        next_step: String,
+    },
     CompleteExperiment {
         idea_id: String,
         situation: String,

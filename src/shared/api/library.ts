@@ -7,6 +7,7 @@ import type { CompletionWorkDecision } from "./generated/CompletionWorkDecision"
 import type { CompletionWorkKind } from "./generated/CompletionWorkKind";
 import type { DraftNote } from "./generated/DraftNote";
 import type { Experiment } from "./generated/Experiment";
+import type { ExperimentStatus } from "./generated/ExperimentStatus";
 import type { Idea } from "./generated/Idea";
 import type { ImportPdfResult } from "./generated/ImportPdfResult";
 import type { IdeaAssignment } from "./generated/IdeaAssignment";
@@ -39,6 +40,7 @@ export type {
   CompletionWorkKind,
   DraftNote,
   Experiment,
+  ExperimentStatus,
   Idea,
   ImportPdfResult,
   IdeaAssignment,

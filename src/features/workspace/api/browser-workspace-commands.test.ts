@@ -124,4 +124,70 @@ describe("browser workspace command seam", () => {
 
     expect(state.books.find((book) => book.id === "book-distributed")?.farthestPage).toBe(330);
   });
+
+  it("requires repeat study before a completed book accepts a new draft", async () => {
+    await expect(
+      browserWorkspaceCommands.execute({
+        kind: "captureDraft",
+        bookId: "book-refactoring",
+        section: "Глава 2",
+        page: 47,
+        excerpt: "small steps",
+        context: "Refactoring workflow",
+        comment: "",
+      }),
+    ).rejects.toThrow("Начните повторное изучение");
+
+    await browserWorkspaceCommands.execute({ kind: "startRepeatStudy", bookId: "book-refactoring" });
+    const state = await browserWorkspaceCommands.execute({
+      kind: "captureDraft",
+      bookId: "book-refactoring",
+      section: "Глава 2",
+      page: 47,
+      excerpt: "small steps",
+      context: "Refactoring workflow",
+      comment: "",
+    });
+
+    expect(state.drafts).toContainEqual(expect.objectContaining({ bookId: "book-refactoring" }));
+  });
+
+  it("creates an experiment intent and enforces the closed lifecycle", async () => {
+    let state = await browserWorkspaceCommands.execute({
+      kind: "createExperiment",
+      ideaId: "idea-model",
+      situation: "Моделирование нового контекста",
+      action: "Проверить границу на реальном решении",
+      nextStep: "Собрать обратную связь",
+    });
+    const experiment = state.experiments.find((item) => item.ideaId === "idea-model")!;
+    expect(experiment.status).toBe("intent");
+
+    await expect(
+      browserWorkspaceCommands.execute({
+        kind: "advanceExperiment",
+        experimentId: experiment.id,
+        status: "completed",
+        situation: experiment.situation,
+        action: experiment.action,
+        result: "Результат",
+        conclusion: "Вывод",
+        cancellationReason: "",
+        nextStep: "",
+      }),
+    ).rejects.toThrow("следующий допустимый этап");
+
+    state = await browserWorkspaceCommands.execute({
+      kind: "advanceExperiment",
+      experimentId: experiment.id,
+      status: "running",
+      situation: experiment.situation,
+      action: experiment.action,
+      result: "",
+      conclusion: "",
+      cancellationReason: "",
+      nextStep: experiment.nextStep,
+    });
+    expect(state.experiments.find((item) => item.id === experiment.id)?.status).toBe("running");
+  });
 });

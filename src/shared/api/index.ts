@@ -24,6 +24,7 @@ export {
   type CompletionWorkDecision,
   type CompletionWorkKind,
   type DraftNote,
+  type ExperimentStatus,
   type Idea,
   type ImportPdfResult,
   type IdeaAssignment,

@@ -168,6 +168,17 @@ export function activeLibraryFixture(): LibraryState {
       cancellationReason: "",
       nextStep: "Проверить восстановление после потери аренды",
     },
+    {
+      id: "experiment-002",
+      ideaId: "idea-feedback",
+      situation: "Сокращение цикла обратной связи при рефакторинге",
+      action: "Выполнять по одному наблюдаемому преобразованию",
+      result: "Отрицательный результат выявил слишком крупный первый шаг",
+      conclusion: "Размер шага определяется скоростью проверки, а не числом строк",
+      status: "completed",
+      cancellationReason: "",
+      nextStep: "",
+    },
   ];
   state.recalls = [
     { id: "recall-001", ideaId: "idea-leader", answer: "", rating: "partial", nextAt: fixedNow + 172_800 },
@@ -183,6 +194,44 @@ export function activeLibraryFixture(): LibraryState {
       limitations: "Не относится к системам без единого писателя.",
       ideaIds: ["idea-leader"],
     },
+  ];
+  state.milestones = [
+    {
+      id: "milestone-read-239",
+      bookId: "book-distributed",
+      kind: "readingProgress",
+      occurredAt: fixedNow - 518_400,
+      page: 239,
+    },
+    { id: "milestone-read-286", bookId: "book-distributed", kind: "readingProgress", occurredAt: fixedNow, page: 286 },
+    ...Array.from({ length: 3 }, (_, index) => ({
+      id: `milestone-idea-${index}`,
+      bookId: "book-distributed",
+      kind: "ideaFormulated" as const,
+      occurredAt: fixedNow - index * 86_400,
+      page: null,
+    })),
+    ...Array.from({ length: 2 }, (_, index) => ({
+      id: `milestone-recall-${index}`,
+      bookId: "book-distributed",
+      kind: "recallCompleted" as const,
+      occurredAt: fixedNow - index * 86_400,
+      page: null,
+    })),
+    {
+      id: "milestone-experiment",
+      bookId: "book-distributed",
+      kind: "experimentAdvanced",
+      occurredAt: fixedNow,
+      page: null,
+    },
+    ...Array.from({ length: 7 }, (_, index) => ({
+      id: `milestone-draft-${index}`,
+      bookId: "book-distributed",
+      kind: "draftResolved" as const,
+      occurredAt: fixedNow - index * 86_400,
+      page: null,
+    })),
   ];
   return state;
 }

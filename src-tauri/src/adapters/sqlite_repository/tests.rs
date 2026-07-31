@@ -310,6 +310,64 @@ fn a_negative_practical_experiment_is_a_valid_completed_experiment() {
 }
 
 #[test]
+fn practical_experiment_moves_through_closed_lifecycle_states() {
+    let mut state = LibraryState::default();
+    state.ideas.push(Idea::for_test("idea", "book"));
+
+    state
+        .apply(LibraryAction::CreateExperiment {
+            idea_id: "idea".into(),
+            situation: "Новый сервис".into(),
+            action: "Проверить явный переход".into(),
+            next_step: "Обсудить с командой".into(),
+        })
+        .unwrap();
+    let experiment_id = state.experiments[0].id.clone();
+    assert_eq!(state.experiments[0].status, ExperimentStatus::Intent);
+
+    let skipped = state.apply(LibraryAction::AdvanceExperiment {
+        experiment_id: experiment_id.clone(),
+        status: ExperimentStatus::Completed,
+        situation: "Новый сервис".into(),
+        action: "Проверить явный переход".into(),
+        result: "Результат".into(),
+        conclusion: "Вывод".into(),
+        cancellation_reason: String::new(),
+        next_step: String::new(),
+    });
+    assert_eq!(skipped.unwrap_err().code(), "experiment_transition_invalid");
+
+    for status in [
+        ExperimentStatus::Running,
+        ExperimentStatus::Reviewing,
+        ExperimentStatus::Completed,
+    ] {
+        state
+            .apply(LibraryAction::AdvanceExperiment {
+                experiment_id: experiment_id.clone(),
+                status,
+                situation: "Новый сервис".into(),
+                action: "Проверить явный переход".into(),
+                result: if status == ExperimentStatus::Completed {
+                    "Отрицательный результат".into()
+                } else {
+                    String::new()
+                },
+                conclusion: if status == ExperimentStatus::Completed {
+                    "Не применять".into()
+                } else {
+                    String::new()
+                },
+                cancellation_reason: String::new(),
+                next_step: "Без даты".into(),
+            })
+            .unwrap();
+    }
+
+    assert_eq!(state.experiments[0].status, ExperimentStatus::Completed);
+}
+
+#[test]
 fn study_completion_requires_a_retrospective_and_three_to_seven_ideas() {
     let mut state = LibraryState::default();
     state.books.push(Book::for_test("book", "Книга"));
@@ -969,6 +1027,50 @@ fn activating_another_book_pauses_the_previous_study_atomically() {
         find_book(&state, "second").unwrap().study_status,
         StudyStatus::Active
     );
+}
+
+#[test]
+fn completed_book_requires_repeat_study_before_capturing_a_draft() {
+    let mut state = LibraryState::default();
+    state.books.push(Book {
+        id: "completed".into(),
+        title: "Завершённая книга".into(),
+        study_status: StudyStatus::Completed,
+        ..Book::default()
+    });
+
+    let rejected = state.apply(LibraryAction::CaptureDraft {
+        book_id: "completed".into(),
+        section: "Глава 1".into(),
+        page: 4,
+        excerpt: "Источник".into(),
+        context: "Контекст".into(),
+        comment: String::new(),
+    });
+
+    assert_eq!(
+        rejected.unwrap_err().into_message(),
+        "Начните повторное изучение, чтобы создавать новые черновые заметки"
+    );
+    assert!(state.drafts.is_empty());
+
+    state
+        .apply(LibraryAction::StartRepeatStudy {
+            book_id: "completed".into(),
+        })
+        .unwrap();
+    state
+        .apply(LibraryAction::CaptureDraft {
+            book_id: "completed".into(),
+            section: "Глава 1".into(),
+            page: 4,
+            excerpt: "Источник".into(),
+            context: "Контекст".into(),
+            comment: String::new(),
+        })
+        .unwrap();
+
+    assert_eq!(state.drafts.len(), 1);
 }
 
 #[test]

@@ -34,6 +34,7 @@ vi.mock("@lucide/svelte", async () => {
 });
 
 const execute = vi.fn<(action: LibraryAction) => Promise<LibraryState>>();
+const bookUrl = vi.fn(async () => null);
 const commandFactory = vi.hoisted(() => vi.fn());
 let state: LibraryState;
 
@@ -50,7 +51,7 @@ describe("workspace page behavior", () => {
       execute,
       search: async () => [],
       importPdf: async () => null,
-      bookUrl: async () => null,
+      bookUrl,
       exportDraft: async () => null,
       prepareReview: async () => "",
       runReview: async () => structuredClone(state),
@@ -86,5 +87,56 @@ describe("workspace page behavior", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("Хранилище недоступно");
     expect(screen.getByRole("button", { name: "Повторить открытие" })).toBeTruthy();
+  });
+
+  it("persists document mode and image inversion from the reader", async () => {
+    render(WorkspacePage, { props: { context: "reader", resourceId: "book-distributed" } });
+    await screen.findByText("Designing Data-Intensive Applications");
+    expect(bookUrl).toHaveBeenCalledWith("book-distributed");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Тёмный инвертированный режим" }));
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "updateReaderPreferences",
+          bookId: "book-distributed",
+          preferences: expect.objectContaining({ documentMode: "darkInverted", invertImages: true }),
+        }),
+      ),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "Не инвертировать изображения" }));
+    await waitFor(() =>
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          kind: "updateReaderPreferences",
+          preferences: expect.objectContaining({ documentMode: "darkInverted", invertImages: false }),
+        }),
+      ),
+    );
+  });
+
+  it("derives dashboard and book progress from persisted state", async () => {
+    const book = state.books.find((item) => item.id === "book-distributed")!;
+    book.farthestPage = 333;
+    state.milestones = [
+      { id: "read-old", bookId: book.id, kind: "readingProgress", occurredAt: 1_784_678_400, page: 200 },
+      { id: "read-new", bookId: book.id, kind: "readingProgress", occurredAt: 1_785_283_200, page: 333 },
+      { id: "idea-new", bookId: book.id, kind: "ideaFormulated", occurredAt: 1_785_283_200, page: null },
+      { id: "recall-new", bookId: book.id, kind: "recallCompleted", occurredAt: 1_785_283_200, page: null },
+      { id: "experiment-new", bookId: book.id, kind: "experimentAdvanced", occurredAt: 1_785_283_200, page: null },
+    ];
+
+    render(WorkspacePage, { props: { context: "dashboard" } });
+    const dashboardProgress = (await screen.findByRole("heading", { name: "Текст переходит в знание" })).closest(
+      "article",
+    );
+    expect(dashboardProgress?.textContent).toContain("+133 стр.");
+    expect(screen.getByText("333")).toBeTruthy();
+
+    cleanup();
+    render(WorkspacePage, { props: { context: "book", resourceId: book.id } });
+    await screen.findByRole("heading", { name: book.title, level: 2 });
+    expect(screen.getAllByText("333").length).toBeGreaterThan(0);
   });
 });

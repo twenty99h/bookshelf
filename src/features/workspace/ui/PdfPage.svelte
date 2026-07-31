@@ -66,9 +66,37 @@
         container: targetTextLayer,
         viewport,
       }).render();
+      highlightSavedSources(targetTextLayer, sources);
     } catch (cause) {
       if (cause instanceof Error && cause.name !== "RenderingCancelledException") error = cause.message;
     }
+  }
+
+  function highlightSavedSources(textLayer: HTMLDivElement, savedSources: SourceFragment[]) {
+    const spans = [...textLayer.querySelectorAll<HTMLElement>("span")];
+    const segments: { span: HTMLElement; start: number; end: number }[] = [];
+    let pageText = "";
+    for (const span of spans) {
+      const text = normalizeText(span.textContent ?? "");
+      if (!text) continue;
+      const start = pageText.length;
+      pageText += `${pageText ? " " : ""}${text}`;
+      const adjustedStart = start + (start ? 1 : 0);
+      segments.push({ span, start: adjustedStart, end: adjustedStart + text.length });
+    }
+    for (const source of savedSources) {
+      const excerpt = normalizeText(source.excerpt);
+      const start = pageText.indexOf(excerpt);
+      if (start < 0) continue;
+      const end = start + excerpt.length;
+      for (const segment of segments) {
+        if (segment.start < end && segment.end > start) segment.span.dataset.sourceHighlight = "true";
+      }
+    }
+  }
+
+  function normalizeText(value: string) {
+    return value.replace(/\s+/g, " ").trim().toLocaleLowerCase("ru");
   }
 </script>
 

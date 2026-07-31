@@ -16,6 +16,24 @@
     onRun: (action: LibraryAction, message?: string) => Promise<boolean>;
     onDelete: () => void;
   } = $props();
+
+  const bookIdeaIds = $derived(
+    new Set(library.ideas.filter((idea) => idea.bookId === selectedBook?.id).map((idea) => idea.id)),
+  );
+  const resolvedDraftCount = $derived(
+    library.milestones.filter(
+      (milestone) => milestone.bookId === selectedBook?.id && milestone.kind === "draftResolved",
+    ).length,
+  );
+  const recallCount = $derived(library.recalls.filter((recall) => bookIdeaIds.has(recall.ideaId)).length);
+  const experimentCount = $derived(
+    library.experiments.filter(
+      (experiment) => bookIdeaIds.has(experiment.ideaId) && ["completed", "cancelled"].includes(experiment.status),
+    ).length,
+  );
+  const readingProgressWidth = $derived(
+    selectedBook ? `${Math.min(100, (selectedBook.farthestPage / Math.max(1, selectedBook.pageCount)) * 100)}%` : "0%",
+  );
 </script>
 
 {#if selectedBook}
@@ -69,9 +87,12 @@
           >последняя</span
         >
       </div>
-      <div class="mt-3 h-1.5 rounded-full bg-night"><div class="h-full w-[56%] rounded-full bg-iris"></div></div>
+      <div class="mt-3 h-1.5 rounded-full bg-night">
+        <div class="h-full rounded-full bg-iris" style:width={readingProgressWidth}></div>
+      </div>
       <p class="mt-5 text-sm text-mist-dim">
-        Самая дальняя позиция <span class="font-mono text-mist">312</span>. Возврат к источнику её не уменьшает.
+        Самая дальняя позиция <span class="font-mono text-mist">{selectedBook.farthestPage}</span>. Возврат к источнику
+        её не уменьшает.
       </p>
     </aside>
   </div>
@@ -98,7 +119,7 @@
       <dl class="mt-4 grid gap-3 text-sm">
         <div class="flex">
           <dt>Разобрано</dt>
-          <dd class="ml-auto font-mono">7</dd>
+          <dd class="ml-auto font-mono">{resolvedDraftCount}</dd>
         </div>
         <div class="flex">
           <dt>Идей</dt>
@@ -106,11 +127,11 @@
         </div>
         <div class="flex">
           <dt>Восстановлений</dt>
-          <dd class="ml-auto font-mono">2</dd>
+          <dd class="ml-auto font-mono">{recallCount}</dd>
         </div>
         <div class="flex">
           <dt>Применений</dt>
-          <dd class="ml-auto font-mono">1</dd>
+          <dd class="ml-auto font-mono">{experimentCount}</dd>
         </div>
       </dl>
       <a

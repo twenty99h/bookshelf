@@ -36,6 +36,14 @@ test("reader formulates an idea without assigning learning work automatically", 
   ).toBeVisible();
 });
 
+test("completed books stay readable but require repeat study before new capture", async ({ page }) => {
+  await page.goto("/reader/book-refactoring");
+  await expect(page.getByTestId("reader-ready")).toBeVisible();
+  await page.getByRole("button", { name: "Показать инструменты чтения" }).click();
+  await expect(page.getByText(/Начните повторное изучение/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /В черновики/ })).toBeDisabled();
+});
+
 test("real PDF text selection preserves an addressable source", async ({ page }) => {
   const reader = new ReaderPage(page);
   await reader.open();
@@ -98,6 +106,7 @@ test("cross-page PDF selection saves distinct excerpts and restores both source 
   await page.reload();
   const markers = page.getByRole("button", { name: /Открыть сохранённый источник на странице/ });
   await expect(markers).toHaveCount(2);
+  await expect(page.locator('[data-source-highlight="true"]').first()).toBeVisible();
   await markers.first().click();
   await expect(page.getByLabel("Фрагмент книги")).toHaveValue(expected[0] ?? "");
 });
@@ -150,6 +159,26 @@ test("browser scenarios expose deterministic loading and recoverable library err
   await expect(page.getByRole("status")).toContainText("Открываем личную библиотеку");
   await page.goto("/?scenario=error");
   await expect(page.getByRole("alert")).toContainText("Тестовая библиотека недоступна");
+});
+
+test("practice supports recall timing and the complete experiment lifecycle", async ({ page }) => {
+  await new AppPage(page).open("/practice");
+  await page.getByRole("button", { name: "Перенести на 7 дней" }).click();
+  await page.getByLabel("Ситуация нового замысла").fill("Проверка модели на новом сервисе");
+  await page.getByLabel("Проверяемое действие").fill("Сделать переход владельца явным");
+  await page.getByLabel("Следующий шаг нового замысла").fill("Обсудить результат без дедлайна");
+  await page.getByRole("button", { name: "Создать замысел" }).click();
+
+  await page.getByRole("button", { name: "Перейти к итогу" }).click();
+  await page.getByLabel("Наблюдаемый результат").fill("Команда обнаружила дополнительный сценарий отказа");
+  await page.getByLabel("Авторский вывод").fill("Явный переход полезен даже при отрицательном результате");
+  await page.getByRole("button", { name: "Завершить эксперимент" }).click();
+
+  const commands = await page.evaluate(() => window.__BOOKSHELF_TEST__?.commands ?? []);
+  expect(commands).toContainEqual(expect.objectContaining({ kind: "rescheduleRecall", recallId: "recall-001" }));
+  expect(commands).toContainEqual(expect.objectContaining({ kind: "createExperiment" }));
+  expect(commands).toContainEqual(expect.objectContaining({ kind: "advanceExperiment", status: "completed" }));
+  await expect(page.getByText("Refactoring")).toBeVisible();
 });
 
 test("completion persists separate decisions through work, experiments, and final confirmation", async ({ page }) => {
@@ -217,6 +246,29 @@ test("reader restores position and layout after reload", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Оглавление" })).toBeVisible();
 });
 
+test("reader restores document mode, image inversion, and the textless PDF fallback", async ({ page }) => {
+  const reader = new ReaderPage(page);
+  await reader.open();
+  await page.getByRole("button", { name: "Оригинальный режим" }).click();
+  await page.getByRole("button", { name: "Тёмный инвертированный режим" }).click();
+  await page.getByRole("button", { name: "Не инвертировать изображения" }).click();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Тёмный инвертированный режим" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: "Инвертировать изображения" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+
+  await page.goto("/reader/book-systems");
+  await expect(page.getByTestId("reader-ready")).toBeVisible();
+  await page.getByRole("button", { name: "Показать инструменты чтения" }).click();
+  await expect(page.getByText(/нет текстового слоя/)).toBeVisible();
+  await expect(page.getByText(/OCR не выполняется/)).toBeVisible();
+});
+
 test("keyboard-only reader flow returns focus to the sidebar trigger", async ({ page }) => {
   const reader = new ReaderPage(page);
   await reader.open();
@@ -236,6 +288,20 @@ test("global command palette navigates in the current window", async ({ page }) 
   await page.getByRole("button", { name: "Найти", exact: true }).click();
   await page.getByRole("button", { name: /Domain-Driven Design/ }).click();
   await expect(page).toHaveURL(/\/library\/book-domain$/);
+});
+
+test("global command palette opens over Reader and material results return to their PDF source", async ({ page }) => {
+  const reader = new ReaderPage(page);
+  await reader.open();
+  await page.keyboard.press("Control+K");
+  const dialog = page.getByRole("dialog", { name: "Быстрый переход" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Поиск").fill("Почему лидер");
+  await dialog.getByRole("button", { name: "Найти", exact: true }).click();
+  await dialog.getByRole("button", { name: /Почему лидер — это риск/ }).click();
+
+  await expect(page).toHaveURL(/\/reader\/book-distributed\?sourcePage=286$/);
+  await expect(page.getByTestId("reader-ready")).toBeVisible();
 });
 
 for (const path of ["/", "/library", "/drafts", "/knowledge", "/practice", "/settings"]) {
