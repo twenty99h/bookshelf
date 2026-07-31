@@ -115,6 +115,37 @@ pub(crate) fn search_library(
     port.search(query)
 }
 
+pub(crate) fn delete_book(
+    files: &impl ReadingPort,
+    repository: &impl LibraryRepository,
+    clock: &impl Clock,
+    ids: &impl IdGenerator,
+    book_id: &str,
+) -> Result<LibraryState, ApplicationError> {
+    let original = repository.load()?;
+    let stored_file = original
+        .books
+        .iter()
+        .find(|book| book.id == book_id)
+        .map(|book| book.stored_file.clone())
+        .ok_or_else(|| DomainError::new("book_not_found", "Книга не найдена"))?;
+    let mut state = original.clone();
+    let mut make_id = |prefix: &str| ids.next_id(prefix);
+    state.apply_with(
+        LibraryAction::DeleteBook {
+            book_id: book_id.into(),
+        },
+        clock.now(),
+        &mut make_id,
+    )?;
+    repository.commit(&state)?;
+    if let Err(error) = files.remove_pdf(&stored_file) {
+        repository.commit(&original)?;
+        return Err(ApplicationError::Persistence(error));
+    }
+    Ok(state)
+}
+
 pub(crate) fn export_archive(
     port: &impl ArchivePort,
     repository: &impl LibraryRepository,
@@ -223,6 +254,17 @@ pub(crate) fn export_draft(
             draft_id: draft_id.into(),
         },
     )
+}
+
+pub(crate) fn export_diagnostics(
+    port: &impl ExportPort,
+    path: String,
+    entries: &[String],
+) -> Result<(), ApplicationError> {
+    let first = entries.len().saturating_sub(100);
+    let contents = entries[first..].join("\n");
+    port.write_text(path, &contents)?;
+    Ok(())
 }
 
 pub(crate) trait LibraryRepository {
@@ -337,6 +379,31 @@ mod tests {
         }
     }
 
+    struct RecordingPdf {
+        removed: RefCell<Vec<String>>,
+        fail_removal: bool,
+    }
+
+    impl ReadingPort for RecordingPdf {
+        fn store_pdf(
+            &self,
+            _path: String,
+            _title: String,
+            _id: String,
+        ) -> Result<Book, ApplicationError> {
+            unreachable!("not used by deletion")
+        }
+
+        fn remove_pdf(&self, stored_file: &str) -> Result<(), std::io::Error> {
+            self.removed.borrow_mut().push(stored_file.into());
+            if self.fail_removal {
+                Err(std::io::Error::other("file is locked"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     #[test]
     fn draft_capture_uses_injected_time_and_id_and_returns_one_snapshot() {
         let repository = MemoryRepository(RefCell::new(LibraryState {
@@ -414,5 +481,65 @@ mod tests {
         assert!(writer.0.borrow().contains("Надёжные системы"));
         assert!(state.drafts.is_empty());
         assert_eq!(*repository.0.borrow(), state);
+    }
+
+    #[test]
+    fn permanent_deletion_commits_dependencies_and_removes_the_stored_pdf() {
+        let repository = MemoryRepository(RefCell::new(LibraryState {
+            books: vec![Book {
+                id: "book".into(),
+                stored_file: "books/book.pdf".into(),
+                ..Book::default()
+            }],
+            drafts: vec![crate::domain::DraftNote::for_test("draft", "book")],
+            ..LibraryState::default()
+        }));
+        let files = RecordingPdf {
+            removed: RefCell::new(Vec::new()),
+            fail_removal: false,
+        };
+
+        let state = delete_book(&files, &repository, &FixedClock, &PredictableIds, "book").unwrap();
+
+        assert!(state.books.is_empty());
+        assert!(state.drafts.is_empty());
+        assert_eq!(&*files.removed.borrow(), &["books/book.pdf"]);
+    }
+
+    #[test]
+    fn permanent_deletion_restores_state_when_the_pdf_cannot_be_removed() {
+        let original = LibraryState {
+            books: vec![Book {
+                id: "book".into(),
+                stored_file: "books/book.pdf".into(),
+                ..Book::default()
+            }],
+            ..LibraryState::default()
+        };
+        let repository = MemoryRepository(RefCell::new(original.clone()));
+        let files = RecordingPdf {
+            removed: RefCell::new(Vec::new()),
+            fail_removal: true,
+        };
+
+        let result = delete_book(&files, &repository, &FixedClock, &PredictableIds, "book");
+
+        assert!(matches!(result, Err(ApplicationError::Persistence(_))));
+        assert_eq!(*repository.0.borrow(), original);
+    }
+
+    #[test]
+    fn diagnostic_export_keeps_only_the_latest_hundred_local_entries() {
+        let writer = MemoryWriter(RefCell::new(String::new()));
+        let entries = (0..105)
+            .map(|index| format!("entry-{index}"))
+            .collect::<Vec<_>>();
+
+        export_diagnostics(&writer, "diagnostics.log".into(), &entries).unwrap();
+
+        let output = writer.0.borrow();
+        assert!(!output.contains("entry-4\n"));
+        assert!(output.starts_with("entry-5\n"));
+        assert!(output.ends_with("entry-104"));
     }
 }

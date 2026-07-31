@@ -343,16 +343,17 @@ pub enum RecallRating {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct Retrospective {
     pub text: String,
     pub significant_idea_ids: Vec<String>,
     pub continuing_work: String,
     pub unfinished_work_decision: String,
+    pub work_decisions: Vec<CompletionWorkDecision>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct StudyCompletionDraft {
     pub book_id: String,
     pub step: u8,
@@ -361,6 +362,25 @@ pub struct StudyCompletionDraft {
     pub retrospective: String,
     pub unfinished_work_decision: String,
     pub continuing_work: String,
+    pub work_decisions: Vec<CompletionWorkDecision>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionWorkDecision {
+    pub work_id: String,
+    pub kind: CompletionWorkKind,
+    pub decision: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum CompletionWorkKind {
+    #[default]
+    Draft,
+    Review,
+    Recall,
+    Experiment,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
@@ -448,6 +468,9 @@ pub enum LibraryAction {
     RestoreBook {
         book_id: String,
     },
+    DeleteBook {
+        book_id: String,
+    },
     StartRepeatStudy {
         book_id: String,
     },
@@ -531,6 +554,7 @@ pub enum LibraryAction {
         significant_idea_ids: Vec<String>,
         continuing_work: String,
         unfinished_work_decision: String,
+        work_decisions: Vec<CompletionWorkDecision>,
     },
     SaveStudyCompletionDraft {
         draft: StudyCompletionDraft,

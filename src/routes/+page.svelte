@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { DashboardPage } from "@/pages/dashboard";
+  import { WorkspacePage } from "@/pages/workspace";
 </script>
 
-<DashboardPage />
+<WorkspacePage context="dashboard" />

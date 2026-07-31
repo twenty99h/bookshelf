@@ -3,6 +3,7 @@
   import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist";
   import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
   import type { OutlineItem, SourceFragment } from "@/shared/api";
+  import { extractPdfSelection } from "../lib/pdf-selection";
   import PdfPage from "./PdfPage.svelte";
 
   let {
@@ -162,16 +163,7 @@
       !container.contains(selection.anchorNode)
     )
       return;
-    const excerpt = selection.toString().trim();
-    if (!excerpt) return;
-    const range = selection.getRangeAt(0);
-    const fragments = [...container.querySelectorAll<HTMLElement>("[data-pdf-page]")]
-      .filter((page) => range.intersectsNode(page))
-      .map((page) => ({
-        page: Number(page.dataset.pdfPage),
-        excerpt,
-        context: page.textContent?.replace(/\s+/g, " ").trim().slice(0, 500) ?? "",
-      }));
+    const fragments = extractPdfSelection(container, selection);
     if (fragments.length) onSelection(fragments);
   }
 </script>

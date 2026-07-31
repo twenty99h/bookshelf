@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { IdeaPage } from "@/pages/idea";
+  import { WorkspacePage } from "@/pages/workspace";
 </script>
 
-<IdeaPage ideaId={page.params.ideaId} />
+<WorkspacePage context="idea" resourceId={page.params.ideaId} />

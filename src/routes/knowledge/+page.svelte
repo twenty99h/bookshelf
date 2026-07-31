@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { KnowledgePage } from "@/pages/knowledge";
+  import { WorkspacePage } from "@/pages/workspace";
 </script>
 
-<KnowledgePage />
+<WorkspacePage context="knowledge" />

@@ -2,11 +2,14 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   bookFilePath,
+  deleteBook,
   exportDraftMarkdown,
+  exportDiagnosticLog,
   exportLibraryArchive,
   executeLibraryAction,
   importPdf,
   importLibraryArchive,
+  installSignedUpdate,
   loadLibrary,
   prepareCodexReview,
   restoreLatestSnapshot,
@@ -25,12 +28,15 @@ export interface WorkspaceCommands {
   search(query: string): Promise<SearchResult[]>;
   importPdf(): Promise<ImportPdfResult | null>;
   bookUrl(bookId: string): Promise<string | null>;
+  deleteBook(bookId: string): Promise<LibraryState>;
   exportDraft(draftId: string): Promise<LibraryState | null>;
   prepareReview(ideaId: string, kind: ReviewKind): Promise<string>;
   runReview(ideaId: string, kind: ReviewKind, approvedPackage: string): Promise<LibraryState>;
   restoreBackup(): Promise<LibraryState>;
   exportArchive(password: string): Promise<boolean>;
   importArchive(password: string): Promise<LibraryState | null>;
+  checkForUpdate(): Promise<boolean>;
+  exportDiagnostics(entries: string[]): Promise<boolean>;
 }
 
 const desktopCommands: WorkspaceCommands = {
@@ -44,6 +50,7 @@ const desktopCommands: WorkspaceCommands = {
   async bookUrl(bookId) {
     return convertFileSrc(await bookFilePath(bookId));
   },
+  deleteBook,
   async exportDraft(draftId) {
     const path = await save({ filters: [{ name: "Markdown", extensions: ["md"] }] });
     return path ? exportDraftMarkdown(draftId, path) : null;
@@ -62,6 +69,13 @@ const desktopCommands: WorkspaceCommands = {
   async importArchive(password) {
     const path = await open({ multiple: false, filters: [{ name: "Bookshelf archive", extensions: ["bookshelf"] }] });
     return path ? importLibraryArchive(path, password) : null;
+  },
+  checkForUpdate: installSignedUpdate,
+  async exportDiagnostics(entries) {
+    const path = await save({ filters: [{ name: "Diagnostic log", extensions: ["log"] }] });
+    if (!path) return false;
+    await exportDiagnosticLog(path, entries);
+    return true;
   },
 };
 

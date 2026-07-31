@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { CompletionPage } from "@/pages/completion";
+  import { WorkspacePage } from "@/pages/workspace";
 </script>
 
-<CompletionPage bookId={page.params.bookId} />
+<WorkspacePage context="completion" resourceId={page.params.bookId} />

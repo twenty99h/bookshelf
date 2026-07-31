@@ -27,6 +27,7 @@ for (const [name, path] of screens) {
       await new ReaderPage(page).open();
     } else {
       await new AppPage(page).open(path);
+      if (name === "settings-backup") await page.getByRole("button", { name: "Резервные копии" }).click();
     }
     await expect(page).toHaveScreenshot(`${name}.png`);
   });

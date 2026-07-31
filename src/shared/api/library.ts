@@ -3,6 +3,8 @@ import type { Book } from "./generated/Book";
 import type { CodexStreamEvent } from "./generated/CodexStreamEvent";
 import type { CodexStreamEventKind } from "./generated/CodexStreamEventKind";
 import type { CommandError } from "./generated/CommandError";
+import type { CompletionWorkDecision } from "./generated/CompletionWorkDecision";
+import type { CompletionWorkKind } from "./generated/CompletionWorkKind";
 import type { DraftNote } from "./generated/DraftNote";
 import type { Experiment } from "./generated/Experiment";
 import type { Idea } from "./generated/Idea";
@@ -33,6 +35,8 @@ export type {
   CodexStreamEvent,
   CodexStreamEventKind,
   CommandError,
+  CompletionWorkDecision,
+  CompletionWorkKind,
   DraftNote,
   Experiment,
   Idea,
@@ -64,6 +68,9 @@ export async function loadLibrary(): Promise<LibraryState> {
 export async function executeLibraryAction(action: LibraryAction): Promise<LibraryState> {
   return invoke<LibraryState>("execute_library_action", { action });
 }
+export async function deleteBook(bookId: string): Promise<LibraryState> {
+  return invoke<LibraryState>("delete_book", { bookId });
+}
 export async function importPdf(path: string, title = ""): Promise<ImportPdfResult> {
   return invoke<ImportPdfResult>("import_pdf", { path, title });
 }
@@ -87,6 +94,9 @@ export async function exportMaterialMarkdown(materialId: string, path: string): 
 }
 export async function exportDraftMarkdown(draftId: string, path: string): Promise<LibraryState> {
   return invoke<LibraryState>("export_draft_markdown", { draftId, path });
+}
+export async function exportDiagnosticLog(path: string, entries: string[]): Promise<void> {
+  return invoke("export_diagnostic_log", { path, entries });
 }
 export async function installSignedUpdate(): Promise<boolean> {
   return invoke<boolean>("install_signed_update");

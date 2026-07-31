@@ -306,6 +306,42 @@ impl LibraryState {
                 let book = find_book_mut(self, &book_id)?;
                 book.archived = false;
             }
+            LibraryAction::DeleteBook { book_id } => {
+                find_book(self, &book_id)?;
+                let idea_ids = self
+                    .ideas
+                    .iter()
+                    .filter(|idea| idea.book_id == book_id)
+                    .map(|idea| idea.id.clone())
+                    .collect::<HashSet<_>>();
+
+                self.books.retain(|book| book.id != book_id);
+                self.drafts.retain(|draft| draft.book_id != book_id);
+                self.ideas.retain(|idea| idea.book_id != book_id);
+                self.idea_links.retain(|link| {
+                    !idea_ids.contains(&link.from_idea_id) && !idea_ids.contains(&link.to_idea_id)
+                });
+                self.experiments
+                    .retain(|experiment| !idea_ids.contains(&experiment.idea_id));
+                self.recalls
+                    .retain(|recall| !idea_ids.contains(&recall.idea_id));
+                self.reviews
+                    .retain(|review| !idea_ids.contains(&review.idea_id));
+                for material in &mut self.materials {
+                    material
+                        .idea_ids
+                        .retain(|idea_id| !idea_ids.contains(idea_id));
+                }
+                self.materials
+                    .retain(|material| !material.idea_ids.is_empty());
+                self.milestones
+                    .retain(|milestone| milestone.book_id != book_id);
+                self.completion_drafts
+                    .retain(|draft| draft.book_id != book_id);
+                if self.active_study_book_id.as_deref() == Some(book_id.as_str()) {
+                    self.active_study_book_id = None;
+                }
+            }
             LibraryAction::StartRepeatStudy { book_id } => {
                 if find_book(self, &book_id)?.study_status != StudyStatus::Completed {
                     return Err(DomainError::new(
@@ -676,6 +712,7 @@ impl LibraryState {
                 significant_idea_ids,
                 continuing_work,
                 unfinished_work_decision,
+                work_decisions,
             } => {
                 find_book(self, &book_id)?;
                 if retrospective.trim().is_empty()
@@ -698,6 +735,58 @@ impl LibraryState {
                         "Значимые идеи должны относиться к этой книге",
                     ));
                 }
+                let idea_belongs_to_book = |idea_id: &str| {
+                    self.ideas
+                        .iter()
+                        .any(|idea| idea.id == idea_id && idea.book_id == book_id)
+                };
+                let mut required_work = self
+                    .drafts
+                    .iter()
+                    .filter(|draft| draft.book_id == book_id)
+                    .map(|draft| (draft.id.as_str(), CompletionWorkKind::Draft))
+                    .collect::<Vec<_>>();
+                required_work.extend(
+                    self.reviews
+                        .iter()
+                        .filter(|review| review.pending && idea_belongs_to_book(&review.idea_id))
+                        .map(|review| (review.id.as_str(), CompletionWorkKind::Review)),
+                );
+                required_work.extend(
+                    self.recalls
+                        .iter()
+                        .filter(|recall| idea_belongs_to_book(&recall.idea_id))
+                        .map(|recall| (recall.id.as_str(), CompletionWorkKind::Recall)),
+                );
+                required_work.extend(
+                    self.experiments
+                        .iter()
+                        .filter(|experiment| {
+                            !matches!(
+                                experiment.status,
+                                ExperimentStatus::Completed | ExperimentStatus::Cancelled
+                            ) && idea_belongs_to_book(&experiment.idea_id)
+                        })
+                        .map(|experiment| (experiment.id.as_str(), CompletionWorkKind::Experiment)),
+                );
+                let decisions_complete = required_work.iter().all(|(work_id, kind)| {
+                    work_decisions
+                        .iter()
+                        .filter(|decision| decision.work_id == *work_id && decision.kind == *kind)
+                        .count()
+                        == 1
+                        && work_decisions.iter().any(|decision| {
+                            decision.work_id == *work_id
+                                && decision.kind == *kind
+                                && !decision.decision.trim().is_empty()
+                        })
+                });
+                if !decisions_complete {
+                    return Err(DomainError::new(
+                        "completion_work_decisions_required",
+                        "Выберите отдельное решение для каждого черновика, проверки, восстановления и эксперимента",
+                    ));
+                }
                 let book = find_book_mut(self, &book_id)?;
                 book.study_status = StudyStatus::Completed;
                 let completed_retrospective = Retrospective {
@@ -705,6 +794,7 @@ impl LibraryState {
                     significant_idea_ids,
                     continuing_work,
                     unfinished_work_decision,
+                    work_decisions,
                 };
                 book.retrospective = Some(completed_retrospective.clone());
                 if let Some(cycle) = book.study_cycles.last_mut() {

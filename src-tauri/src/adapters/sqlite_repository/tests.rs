@@ -320,9 +320,87 @@ fn study_completion_requires_a_retrospective_and_three_to_seven_ideas() {
         significant_idea_ids: vec![],
         continuing_work: "".into(),
         unfinished_work_decision: "".into(),
+        work_decisions: vec![],
     });
     assert_eq!(result.unwrap_err().code(), "retrospective_required");
     assert_eq!(state.active_study_book_id.as_deref(), Some("book"));
+}
+
+#[test]
+fn study_completion_persists_a_distinct_decision_for_each_open_work_item() {
+    let mut state = LibraryState::default();
+    state.books.push(Book::for_test("book", "Книга"));
+    for id in ["idea-1", "idea-2", "idea-3"] {
+        state.ideas.push(Idea::for_test(id, "book"));
+    }
+    state.drafts.push(DraftNote::for_test("draft", "book"));
+    state.reviews.push(IdeaReview {
+        id: "review".into(),
+        idea_id: "idea-1".into(),
+        pending: true,
+        ..IdeaReview::default()
+    });
+    state.recalls.push(Recall {
+        id: "recall".into(),
+        idea_id: "idea-2".into(),
+        ..Recall::default()
+    });
+    state.experiments.push(Experiment {
+        id: "experiment".into(),
+        idea_id: "idea-3".into(),
+        status: ExperimentStatus::Running,
+        ..Experiment::default()
+    });
+    let base = LibraryAction::CompleteStudy {
+        book_id: "book".into(),
+        retrospective: "Авторский итог".into(),
+        significant_idea_ids: vec!["idea-1".into(), "idea-2".into(), "idea-3".into()],
+        continuing_work: "Эксперимент продолжается".into(),
+        unfinished_work_decision: "Каждый пункт разобран отдельно".into(),
+        work_decisions: vec![],
+    };
+
+    assert_eq!(
+        state.apply(base).unwrap_err().code(),
+        "completion_work_decisions_required"
+    );
+    let decisions = [
+        ("draft", CompletionWorkKind::Draft, "Разобрать позже"),
+        (
+            "review",
+            CompletionWorkKind::Review,
+            "Оставить до уточнения",
+        ),
+        ("recall", CompletionWorkKind::Recall, "Повторить вручную"),
+        ("experiment", CompletionWorkKind::Experiment, "Продолжить"),
+    ]
+    .into_iter()
+    .map(|(work_id, kind, decision)| CompletionWorkDecision {
+        work_id: work_id.into(),
+        kind,
+        decision: decision.into(),
+    })
+    .collect::<Vec<_>>();
+    state
+        .apply(LibraryAction::CompleteStudy {
+            book_id: "book".into(),
+            retrospective: "Авторский итог".into(),
+            significant_idea_ids: vec!["idea-1".into(), "idea-2".into(), "idea-3".into()],
+            continuing_work: "Эксперимент продолжается".into(),
+            unfinished_work_decision: "Каждый пункт разобран отдельно".into(),
+            work_decisions: decisions.clone(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        state.books[0]
+            .retrospective
+            .as_ref()
+            .unwrap()
+            .work_decisions,
+        decisions
+    );
+    assert_eq!(state.experiments[0].status, ExperimentStatus::Running);
 }
 
 #[test]
@@ -594,6 +672,47 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
     .unwrap();
     assert!(result.duplicate);
     assert_eq!(result.state.books.len(), before_duplicate);
+    fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
+fn native_smoke_imports_a_pdf_opens_its_local_path_and_restores_reader_position_after_restart() {
+    let data_dir = test_data_dir();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf/text-layer.pdf");
+    let book_id = {
+        let library = Library::open(&data_dir).unwrap();
+        let imported = crate::application::import_pdf(
+            &library.reading_storage(),
+            &library,
+            &SystemIdGenerator,
+            fixture.to_string_lossy().into_owned(),
+            "Native smoke".into(),
+        )
+        .unwrap();
+        let book = imported.state.books.last().unwrap();
+        let local_path = library.absolute_book_path(&book.stored_file);
+        assert!(local_path.is_absolute());
+        assert!(local_path.is_file());
+        library
+            .apply(LibraryAction::UpdateReading {
+                book_id: book.id.clone(),
+                page: 2,
+                zoom: 1.35,
+                scroll: 640.0,
+            })
+            .unwrap();
+        book.id.clone()
+    };
+
+    let restarted = Library::open(&data_dir).unwrap().load().unwrap();
+    let book = restarted
+        .books
+        .iter()
+        .find(|book| book.id == book_id)
+        .unwrap();
+    assert_eq!(book.reading.page, 2);
+    assert_eq!(book.reading.zoom, 1.35);
+    assert_eq!(book.reading.scroll, 640.0);
     fs::remove_dir_all(data_dir).unwrap();
 }
 
@@ -968,4 +1087,91 @@ fn completion_draft_replaces_the_previous_step_for_the_same_book() {
     }
     assert_eq!(state.completion_drafts.len(), 1);
     assert_eq!(state.completion_drafts[0].step, 3);
+}
+
+#[test]
+fn permanent_book_deletion_removes_all_owned_learning_state() {
+    let book_id = "book".to_owned();
+    let idea_id = "idea".to_owned();
+    let idea_ids = std::collections::HashSet::from([idea_id.clone()]);
+    let mut state = LibraryState {
+        books: vec![Book::for_test(&book_id, "Книга")],
+        drafts: vec![DraftNote::for_test("draft", &book_id)],
+        ideas: vec![Idea::for_test(&idea_id, &book_id)],
+        idea_links: vec![IdeaLink {
+            id: "link".into(),
+            from_idea_id: idea_id.clone(),
+            to_idea_id: "other-idea".into(),
+            relation: IdeaRelation::Complements,
+        }],
+        experiments: vec![Experiment {
+            id: "experiment".into(),
+            idea_id: idea_id.clone(),
+            ..Experiment::default()
+        }],
+        recalls: vec![Recall {
+            id: "recall".into(),
+            idea_id: idea_id.clone(),
+            ..Recall::default()
+        }],
+        reviews: vec![IdeaReview {
+            id: "review".into(),
+            idea_id: idea_id.clone(),
+            ..IdeaReview::default()
+        }],
+        materials: vec![TransferMaterial {
+            id: "material".into(),
+            idea_ids: vec![idea_id.clone()],
+            ..TransferMaterial::default()
+        }],
+        milestones: vec![StudyMilestone {
+            id: "milestone".into(),
+            book_id: book_id.clone(),
+            kind: MilestoneKind::DraftCaptured,
+            occurred_at: 1,
+            page: None,
+        }],
+        active_study_book_id: Some(book_id.clone()),
+        ..LibraryState::default()
+    };
+    state.completion_drafts.push(StudyCompletionDraft {
+        book_id: book_id.clone(),
+        step: 4,
+        ..StudyCompletionDraft::default()
+    });
+
+    state
+        .apply(LibraryAction::DeleteBook {
+            book_id: book_id.clone(),
+        })
+        .unwrap();
+
+    assert!(state.books.iter().all(|book| book.id != book_id));
+    assert!(state.drafts.iter().all(|draft| draft.book_id != book_id));
+    assert!(state.ideas.iter().all(|idea| idea.book_id != book_id));
+    assert!(state.idea_links.iter().all(|link| {
+        !idea_ids.contains(&link.from_idea_id) && !idea_ids.contains(&link.to_idea_id)
+    }));
+    assert!(state
+        .experiments
+        .iter()
+        .all(|item| !idea_ids.contains(&item.idea_id)));
+    assert!(state
+        .recalls
+        .iter()
+        .all(|item| !idea_ids.contains(&item.idea_id)));
+    assert!(state
+        .reviews
+        .iter()
+        .all(|item| !idea_ids.contains(&item.idea_id)));
+    assert!(state
+        .materials
+        .iter()
+        .all(|item| item.idea_ids.iter().all(|id| !idea_ids.contains(id))));
+    assert!(state.milestones.iter().all(|item| item.book_id != book_id));
+    assert!(state
+        .completion_drafts
+        .iter()
+        .all(|item| item.book_id != book_id));
+    assert_eq!(state.active_study_book_id, None);
 }

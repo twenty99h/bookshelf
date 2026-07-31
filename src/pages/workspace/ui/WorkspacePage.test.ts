@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LibraryAction, LibraryState } from "@/shared/api";
-import { activeLibraryFixture } from "../model/workspace-fixtures";
-import AppWorkspace from "./AppWorkspace.svelte";
+import { activeLibraryFixture } from "@/features/workspace";
+import WorkspacePage from "./WorkspacePage.svelte";
 
 vi.mock("@lucide/svelte", async () => {
-  const { default: Icon } = await import("./IconStub.test.svelte");
+  const { default: Icon } = await import("@/features/workspace/ui/IconStub.test.svelte");
   return {
     ArrowLeft: Icon,
     BookOpen: Icon,
@@ -37,7 +37,8 @@ const execute = vi.fn<(action: LibraryAction) => Promise<LibraryState>>();
 const commandFactory = vi.hoisted(() => vi.fn());
 let state: LibraryState;
 
-vi.mock("../api/workspace-commands", () => ({
+vi.mock("@/features/workspace", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/workspace")>()),
   createWorkspaceCommands: commandFactory,
 }));
 
@@ -69,7 +70,7 @@ describe("workspace page behavior", () => {
   });
 
   it("commits draft deletion through the domain command seam and advances the focus", async () => {
-    render(AppWorkspace, { props: { context: "drafts" } });
+    render(WorkspacePage, { props: { context: "drafts" } });
     await screen.findByText(/conflict resolution happens on the leader/i);
 
     await fireEvent.click(screen.getByRole("button", { name: "Удалить" }));
@@ -81,7 +82,7 @@ describe("workspace page behavior", () => {
   it("keeps an opening failure local to the recoverable library screen", async () => {
     commandFactory.mockRejectedValueOnce(new Error("Хранилище недоступно"));
 
-    render(AppWorkspace, { props: { context: "dashboard" } });
+    render(WorkspacePage, { props: { context: "dashboard" } });
 
     expect((await screen.findByRole("alert")).textContent).toContain("Хранилище недоступно");
     expect(screen.getByRole("button", { name: "Повторить открытие" })).toBeTruthy();

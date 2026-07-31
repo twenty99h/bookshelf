@@ -57,6 +57,137 @@ test("real PDF text selection preserves an addressable source", async ({ page })
   expect(commands).toContainEqual(expect.objectContaining({ kind: "captureDraftSources", bookId: "book-distributed" }));
 });
 
+test("cross-page PDF selection saves distinct excerpts and restores both source markers", async ({ page }) => {
+  const reader = new ReaderPage(page);
+  await reader.open();
+  await expect(page.locator("[data-pdf-page]")).toHaveCount(3);
+  const renderedPages = page.locator("[data-pdf-page]");
+  await expect(renderedPages.nth(0).locator(".textLayer span").first()).toBeVisible();
+  await expect(renderedPages.nth(1).locator(".textLayer span").first()).toBeVisible();
+  const expected = await page.evaluate(() => {
+    const pages = [...document.querySelectorAll<HTMLElement>("[data-pdf-page]")];
+    const firstSpans = pages[0]?.querySelectorAll(".textLayer span");
+    const secondSpans = pages[1]?.querySelectorAll(".textLayer span");
+    const start = firstSpans?.item(Math.max(0, firstSpans.length - 1)).firstChild;
+    const end = secondSpans?.item(0).firstChild;
+    if (!start || !end) throw new Error("The adjacent PDF text layers were not rendered");
+    const range = document.createRange();
+    range.setStart(start, 0);
+    range.setEnd(end, end.textContent?.length ?? 0);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    return [start.textContent?.trim(), end.textContent?.trim()];
+  });
+  await page.getByRole("button", { name: /В черновики/ }).click();
+
+  const action = await page.evaluate(() =>
+    (window.__BOOKSHELF_TEST__?.commands ?? []).findLast(
+      (command) => (command as { kind?: string }).kind === "captureDraftSources",
+    ),
+  );
+  expect(action).toMatchObject({
+    kind: "captureDraftSources",
+    fragments: [expect.objectContaining({ excerpt: expected[0] }), expect.objectContaining({ excerpt: expected[1] })],
+  });
+  expect((action as { fragments: { excerpt: string }[] }).fragments[0]?.excerpt).not.toBe(
+    (action as { fragments: { excerpt: string }[] }).fragments[1]?.excerpt,
+  );
+
+  await page.reload();
+  const markers = page.getByRole("button", { name: /Открыть сохранённый источник на странице/ });
+  await expect(markers).toHaveCount(2);
+  await markers.first().click();
+  await expect(page.getByLabel("Фрагмент книги")).toHaveValue(expected[0] ?? "");
+});
+
+test("permanent book deletion enumerates consequences and removes the PDF-owned state", async ({ page }) => {
+  await new AppPage(page).open("/library/book-domain");
+  await page.getByRole("button", { name: "Удалить навсегда" }).click();
+  const dialog = page.getByRole("dialog", { name: "Удалить книгу навсегда?" });
+  await expect(dialog).toContainText(/сохранённый PDF/i);
+  await expect(dialog).toContainText("черновых заметок");
+  await dialog.getByRole("button", { name: "Удалить навсегда" }).click();
+  await expect(page).toHaveURL(/\/library$/);
+  const commands = await page.evaluate(() => window.__BOOKSHELF_TEST__?.commands ?? []);
+  expect(commands).toContainEqual({ kind: "deleteBook", bookId: "book-domain" });
+});
+
+test("Codex failures stay local and a successful review is resolved by the reader", async ({ page }) => {
+  await new AppPage(page).open("/knowledge/idea-leader");
+  await page.getByRole("button", { name: "Подготовить проверку" }).click();
+  await page.evaluate(() => {
+    window.__BOOKSHELF_TEST__!.scenario = "codex-crash";
+  });
+  await page.getByRole("button", { name: "Запустить проверку" }).click();
+  await expect(page.getByText(/Codex завершился с ошибкой/)).toBeVisible();
+  await page.evaluate(() => {
+    window.__BOOKSHELF_TEST__!.scenario = "success";
+  });
+  await page.getByRole("button", { name: "Запустить проверку" }).click();
+  await expect(page.getByText(/границы применимости/)).toBeVisible();
+  await page.getByLabel("Необязательный авторский вывод").fill("Формулировка уже содержит нужное ограничение.");
+  await page.getByRole("button", { name: "Оставить без изменений" }).click();
+
+  const commands = await page.evaluate(() => window.__BOOKSHELF_TEST__?.commands ?? []);
+  expect(commands).toContainEqual(
+    expect.objectContaining({ kind: "resolveReview", ideaId: "idea-leader", decision: "unchanged" }),
+  );
+});
+
+test("settings sections expose explicit update and diagnostic actions", async ({ page }) => {
+  await new AppPage(page).open("/settings");
+  await page.getByRole("button", { name: "Библиотека" }).click();
+  await page.getByRole("button", { name: "Экспортировать журнал" }).click();
+  await expect(page.getByRole("status")).toContainText("экспортирован");
+  await page.getByRole("button", { name: "Проверить обновления" }).click();
+  await expect(page.getByRole("status").last()).toContainText("актуальная версия");
+});
+
+test("browser scenarios expose deterministic loading and recoverable library errors", async ({ page }) => {
+  await page.goto("/?scenario=loading");
+  await expect(page.getByRole("status")).toContainText("Открываем личную библиотеку");
+  await page.goto("/?scenario=error");
+  await expect(page.getByRole("alert")).toContainText("Тестовая библиотека недоступна");
+});
+
+test("completion persists separate decisions through work, experiments, and final confirmation", async ({ page }) => {
+  await new AppPage(page).open("/library/book-distributed/complete");
+  await page.getByRole("button", { name: "Чтение завершено" }).click();
+  const ideas = page.getByRole("checkbox");
+  await ideas.nth(0).check();
+  await ideas.nth(1).check();
+  await ideas.nth(2).check();
+  await page.getByRole("button", { name: "Продолжить" }).click();
+  await page.getByLabel("Авторский итог").fill("Теперь я отделяю неопределённость результата от отказа запроса.");
+  await page.getByRole("button", { name: "Сохранить черновик и продолжить" }).click();
+  const decisions = page.getByLabel("Решение");
+  for (let index = 0; index < (await decisions.count()); index += 1) {
+    await decisions.nth(index).click();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+  }
+  await page.getByLabel("Общий комментарий к решениям").fill("Каждый пункт останется в своей очереди.");
+  await page.getByRole("button", { name: "Продолжить" }).click();
+  await page.getByLabel("Решение").click();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Перейти к подтверждению" }).click();
+  await page.waitForFunction(() => {
+    const state = JSON.parse(sessionStorage.getItem("bookshelf-browser-fixture") ?? "{}");
+    return state.completionDrafts?.[0]?.step === 6;
+  });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Подтвердите итог изучения" })).toBeVisible();
+  await page.getByRole("button", { name: "Завершить изучение" }).click();
+
+  const persisted = await page.evaluate(() => JSON.parse(sessionStorage.getItem("bookshelf-browser-fixture") ?? "{}"));
+  expect(persisted.books.find((book: { id: string }) => book.id === "book-distributed").studyStatus).toBe("completed");
+  expect(persisted.experiments[0].status).toBe("running");
+  expect(persisted.completionDrafts).toEqual([]);
+});
+
 test("activating another book pauses the previous active study", async ({ page }) => {
   await new AppPage(page).open("/library/book-domain");
   await page.getByRole("button", { name: "Сделать активной" }).click();

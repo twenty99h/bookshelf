@@ -219,6 +219,7 @@ function book(id: string, title: string, page: number, readingCompleted: boolean
           significantIdeaIds: [],
           continuingWork: "Продолжить наблюдать длительность обратной связи.",
           unfinishedWorkDecision: "Незавершённые эксперименты продолжаются отдельно.",
+          workDecisions: [],
         }
       : null,
   };

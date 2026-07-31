@@ -24,6 +24,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ipc::load_library,
             ipc::execute_library_action,
+            ipc::delete_book,
             ipc::import_pdf,
             ipc::search_library,
             ipc::book_file_path,
@@ -32,6 +33,7 @@ pub fn run() {
             ipc::restore_latest_snapshot,
             ipc::export_material_markdown,
             ipc::export_draft_markdown,
+            ipc::export_diagnostic_log,
             ipc::install_signed_update,
             ipc::prepare_codex_review,
             ipc::run_codex_review,

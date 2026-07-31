@@ -121,6 +121,25 @@ pub(crate) fn execute_library_action(
 }
 
 #[tauri::command]
+pub(crate) fn delete_book(
+    book_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<LibraryState, CommandError> {
+    let library = state
+        .library
+        .lock()
+        .map_err(|_| CommandError::library_access())?;
+    application::delete_book(
+        &library.reading_storage(),
+        &*library,
+        &application::SystemClock,
+        &application::SystemIdGenerator,
+        &book_id,
+    )
+    .map_err(|error| CommandError::from_application(error, "удалить книгу"))
+}
+
+#[tauri::command]
 pub(crate) fn import_pdf(
     path: String,
     title: String,
@@ -256,6 +275,19 @@ pub(crate) fn export_draft_markdown(
         path,
     )
     .map_err(|error| CommandError::from_application(error, "экспортировать черновую заметку"))
+}
+
+#[tauri::command]
+pub(crate) fn export_diagnostic_log(
+    path: String,
+    entries: Vec<String>,
+) -> Result<(), CommandError> {
+    application::export_diagnostics(
+        &crate::adapters::sqlite_repository::TextFileStorage,
+        path,
+        &entries,
+    )
+    .map_err(|error| CommandError::from_application(error, "экспортировать диагностический журнал"))
 }
 
 #[tauri::command]
