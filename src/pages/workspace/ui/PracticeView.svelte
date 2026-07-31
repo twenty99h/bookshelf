@@ -1,22 +1,32 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { Check } from "@lucide/svelte";
   import { Button, SelectField, TextArea, TextField } from "@/shared/ui";
   import type { ExperimentStatus, LibraryState, RecallRating } from "@/shared/api";
 
   let {
     library,
+    bookFilterId,
     onCompleteRecall,
     onRescheduleRecall,
     onStartRecallNow,
     onCreateExperiment,
+    onSaveExperimentDraft,
     onAdvanceExperiment,
   }: {
     library: LibraryState;
-    onCompleteRecall: (answer: string, rating: RecallRating) => Promise<void>;
-    onRescheduleRecall: (days: number) => Promise<void>;
-    onStartRecallNow: () => Promise<void>;
+    bookFilterId: string;
+    onCompleteRecall: (recallId: string, answer: string, rating: RecallRating) => Promise<void>;
+    onRescheduleRecall: (recallId: string, days: number) => Promise<void>;
+    onStartRecallNow: (recallId: string) => Promise<void>;
     onCreateExperiment: (draft: {
+      ideaId: string;
+      situation: string;
+      action: string;
+      nextStep: string;
+    }) => Promise<void>;
+    onSaveExperimentDraft: (draft: {
+      id: string;
       ideaId: string;
       situation: string;
       action: string;
@@ -50,18 +60,61 @@
   let newExperimentSituation = $state("");
   let newExperimentAction = $state("");
   let newExperimentNextStep = $state("");
+  let draftHydrated = $state(false);
+  let draftSaveTimer: number | null = null;
 
-  const recall = $derived(library.recalls.toSorted((a, b) => a.nextAt - b.nextAt)[0] ?? null);
+  const visibleIdeaIds = $derived(
+    new Set(library.ideas.filter((idea) => !bookFilterId || idea.bookId === bookFilterId).map((idea) => idea.id)),
+  );
+  const recall = $derived(
+    library.recalls
+      .filter((item) => visibleIdeaIds.has(item.ideaId) && item.nextAt <= Math.floor(Date.now() / 1_000))
+      .toSorted((a, b) => a.nextAt - b.nextAt)[0] ?? null,
+  );
   const recallIdea = $derived(library.ideas.find((idea) => idea.id === recall?.ideaId) ?? null);
   const currentExperiment = $derived(library.experiments.find((item) => item.id === selectedExperimentId) ?? null);
-  const experimentIdeas = $derived(library.ideas.filter((idea) => idea.assignments.includes("experiment")));
+  const experimentIdeas = $derived(
+    library.ideas.filter((idea) => visibleIdeaIds.has(idea.id) && idea.assignments.includes("experiment")),
+  );
+  const visibleExperiments = $derived(library.experiments.filter((item) => visibleIdeaIds.has(item.ideaId)));
   const relatedExperiments = $derived(library.experiments.filter((experiment) => experiment.ideaId === recallIdea?.id));
 
   onMount(() => {
-    const firstExperiment = library.experiments[0];
+    const firstExperiment = visibleExperiments[0];
     if (firstExperiment) selectExperiment(firstExperiment.id);
-    newExperimentIdeaId = library.ideas.find((idea) => idea.assignments.includes("experiment"))?.id ?? "";
+    newExperimentIdeaId = experimentIdeas[0]?.id ?? "";
+    restoreExperimentDraft(newExperimentIdeaId);
+    draftHydrated = true;
   });
+
+  onDestroy(() => {
+    if (draftSaveTimer) window.clearTimeout(draftSaveTimer);
+  });
+
+  function scheduleExperimentDraftSave() {
+    const draft = {
+      id: `experiment-draft:${newExperimentIdeaId}`,
+      ideaId: newExperimentIdeaId,
+      situation: newExperimentSituation,
+      action: newExperimentAction,
+      nextStep: newExperimentNextStep,
+    };
+    if (
+      !draftHydrated ||
+      !draft.ideaId ||
+      ![draft.situation, draft.action, draft.nextStep].some((value) => value.trim())
+    )
+      return;
+    if (draftSaveTimer) window.clearTimeout(draftSaveTimer);
+    draftSaveTimer = window.setTimeout(() => void onSaveExperimentDraft(draft), 250);
+  }
+
+  function restoreExperimentDraft(ideaId: string) {
+    const draft = library.experimentDrafts.find((item) => item.ideaId === ideaId);
+    newExperimentSituation = draft?.situation ?? "";
+    newExperimentAction = draft?.action ?? "";
+    newExperimentNextStep = draft?.nextStep ?? "";
+  }
 
   function selectExperiment(experimentId: string) {
     const experiment = library.experiments.find((item) => item.id === experimentId);
@@ -104,7 +157,7 @@
   async function startRecallNow() {
     recallRevealed = false;
     recallAnswer = "";
-    await onStartRecallNow();
+    if (recall) await onStartRecallNow(recall.id);
   }
 
   function bookTitleForIdea(ideaId: string) {
@@ -154,9 +207,11 @@
         <div class="mt-5">
           <p class="mb-3 text-sm font-semibold">Как удалось восстановить?</p>
           <div class="flex flex-wrap gap-2">
-            <Button onclick={() => onCompleteRecall(recallAnswer, "confident")}>Уверенно</Button><Button
-              onclick={() => onCompleteRecall(recallAnswer, "partial")}>Частично</Button
-            ><Button onclick={() => onCompleteRecall(recallAnswer, "notRecalled")}>Не восстановил</Button>
+            <Button onclick={() => recall && onCompleteRecall(recall.id, recallAnswer, "confident")}>Уверенно</Button
+            ><Button onclick={() => recall && onCompleteRecall(recall.id, recallAnswer, "partial")}>Частично</Button
+            ><Button onclick={() => recall && onCompleteRecall(recall.id, recallAnswer, "notRecalled")}
+              >Не восстановил</Button
+            >
           </div>
         </div>
         {#if relatedExperiments.length}<div class="mt-5 rounded-lg border border-white/8 p-4">
@@ -168,7 +223,7 @@
       {#if recall}<div class="mt-6 border-t border-white/8 pt-5">
           <p class="text-sm text-mist-dim">Следующее восстановление: {recallDate(recall.nextAt)}.</p>
           <div class="mt-3 flex flex-wrap gap-2">
-            <Button onclick={() => onRescheduleRecall(7)}>Перенести на 7 дней</Button>
+            <Button onclick={() => onRescheduleRecall(recall.id, 7)}>Перенести на 7 дней</Button>
             <Button onclick={startRecallNow}>Начать сейчас</Button>
           </div>
           <p class="mt-3 text-xs text-mist-faint">Без просрочки, календарного сеанса и записи о пропуске.</p>
@@ -248,12 +303,32 @@
       <div class="mt-5 grid gap-4">
         <SelectField
           label="Идея для проверки"
-          bind:value={newExperimentIdeaId}
+          value={newExperimentIdeaId}
+          onValueChange={(ideaId) => {
+            newExperimentIdeaId = ideaId;
+            restoreExperimentDraft(ideaId);
+            scheduleExperimentDraftSave();
+          }}
           options={experimentIdeas.map((idea) => ({ value: idea.id, label: idea.formulation }))}
         />
-        <TextArea id="new-experiment-situation" label="Ситуация нового замысла" bind:value={newExperimentSituation} />
-        <TextArea id="new-experiment-action" label="Проверяемое действие" bind:value={newExperimentAction} />
-        <TextField id="new-experiment-next" label="Следующий шаг нового замысла" bind:value={newExperimentNextStep} />
+        <TextArea
+          id="new-experiment-situation"
+          label="Ситуация нового замысла"
+          bind:value={newExperimentSituation}
+          onValueChange={scheduleExperimentDraftSave}
+        />
+        <TextArea
+          id="new-experiment-action"
+          label="Проверяемое действие"
+          bind:value={newExperimentAction}
+          onValueChange={scheduleExperimentDraftSave}
+        />
+        <TextField
+          id="new-experiment-next"
+          label="Следующий шаг нового замысла"
+          bind:value={newExperimentNextStep}
+          onValueChange={scheduleExperimentDraftSave}
+        />
         <Button
           variant="primary"
           disabled={!newExperimentIdeaId || !newExperimentSituation.trim() || !newExperimentAction.trim()}
@@ -264,7 +339,7 @@
     <div>
       <p class="font-mono text-xs uppercase tracking-[.14em] text-mist-dim">Все эксперименты</p>
       <div class="mt-4 grid gap-2">
-        {#each library.experiments as experiment (experiment.id)}<button
+        {#each visibleExperiments as experiment (experiment.id)}<button
             aria-current={experiment.id === selectedExperimentId ? "true" : undefined}
             class="flex items-start gap-4 rounded-lg border border-white/8 bg-night/30 p-4 text-left aria-[current=true]:border-iris/60"
             onclick={() => selectExperiment(experiment.id)}

@@ -10,12 +10,14 @@ import {
   importPdf,
   importLibraryArchive,
   installSignedUpdate,
+  loadBackupMetadata,
   loadLibrary,
   prepareCodexReview,
   restoreLatestSnapshot,
   runCodexReview,
   searchLibrary,
   type LibraryAction,
+  type BackupMetadata,
   type LibraryState,
   type ImportPdfResult,
   type SearchResult,
@@ -37,6 +39,7 @@ export interface WorkspaceCommands {
   importArchive(password: string): Promise<LibraryState | null>;
   checkForUpdate(): Promise<boolean>;
   exportDiagnostics(entries: string[]): Promise<boolean>;
+  backupMetadata(): Promise<BackupMetadata>;
 }
 
 const desktopCommands: WorkspaceCommands = {
@@ -77,6 +80,7 @@ const desktopCommands: WorkspaceCommands = {
     await exportDiagnosticLog(path, entries);
     return true;
   },
+  backupMetadata: loadBackupMetadata,
 };
 
 export async function createWorkspaceCommands(): Promise<WorkspaceCommands> {

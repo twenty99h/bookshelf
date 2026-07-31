@@ -126,6 +126,20 @@ test("permanent book deletion enumerates consequences and removes the PDF-owned 
   expect(commands).toContainEqual({ kind: "deleteBook", bookId: "book-domain" });
 });
 
+test("book tabs preserve their book scope across navigation and reload", async ({ page }) => {
+  await new AppPage(page).open("/library/book-domain");
+  await page.getByRole("link", { name: "Черновики", exact: true }).click();
+  await expect(page).toHaveURL(/\/drafts\?book=book-domain$/);
+  await page.reload();
+  await page.getByRole("button", { name: "Все заметки" }).click();
+  await expect(page.getByText("A model is a selectively simplified", { exact: false })).toBeVisible();
+  await expect(page.getByText("The advantage of a leader-based", { exact: false })).not.toBeVisible();
+
+  await new AppPage(page).open("/knowledge?book=book-domain");
+  await expect(page.getByRole("link", { name: /Полезная модель намеренно неполна/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Единый лидер делает порядок/ })).not.toBeVisible();
+});
+
 test("Codex failures stay local and a successful review is resolved by the reader", async ({ page }) => {
   await new AppPage(page).open("/knowledge/idea-leader");
   await page.getByRole("button", { name: "Подготовить проверку" }).click();
@@ -182,6 +196,25 @@ test("practice supports recall timing and the complete experiment lifecycle", as
   expect(commands).toContainEqual(expect.objectContaining({ kind: "createExperiment" }));
   expect(commands).toContainEqual(expect.objectContaining({ kind: "advanceExperiment", status: "completed" }));
   await expect(page.getByText("Refactoring")).toBeVisible();
+});
+
+test("unfinished experiment fields survive leaving and reopening Practice", async ({ page }) => {
+  await new AppPage(page).open("/practice");
+  await page.getByLabel("Ситуация нового замысла").fill("Потеря аренды владельца журнала");
+  await page.getByLabel("Проверяемое действие").fill("Восстановить журнал из подтверждённой позиции");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window.__BOOKSHELF_TEST__?.commands ?? []).some(
+          (command) => (command as { kind?: string }).kind === "saveExperimentDraft",
+        ),
+      ),
+    )
+    .toBe(true);
+  await page.goto("/library");
+  await page.goto("/practice");
+  await expect(page.getByLabel("Ситуация нового замысла")).toHaveValue("Потеря аренды владельца журнала");
+  await expect(page.getByLabel("Проверяемое действие")).toHaveValue("Восстановить журнал из подтверждённой позиции");
 });
 
 test("completion persists separate decisions through work, experiments, and final confirmation", async ({ page }) => {
@@ -324,5 +357,15 @@ test.describe("compact desktop boundary", () => {
     await reader.openSidebar("Оглавление");
     const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(pageWidth).toBe(1280);
+  });
+
+  test("knowledge detail is an accessible drawer at exactly 1280 pixels", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await new AppPage(page).open("/knowledge/idea-leader");
+    const drawer = page.locator(".knowledge-detail");
+    await expect(drawer).toBeVisible();
+    await page.getByRole("button", { name: "Закрыть идею" }).click();
+    await expect(drawer).not.toBeVisible();
+    await expect(page.getByRole("link", { name: /Полезная модель намеренно неполна/ })).toBeVisible();
   });
 });

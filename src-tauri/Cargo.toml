@@ -33,3 +33,6 @@ tempfile = "3"
 rusqlite = { version = "0.38", features = ["bundled"] }
 lopdf = { version = "0.44.0", default-features = false }
 sha2 = "0.10"
+
+[dev-dependencies]
+tauri = { version = "2", features = ["protocol-asset", "test"] }

@@ -7,6 +7,7 @@ import type { CompletionWorkDecision } from "./generated/CompletionWorkDecision"
 import type { CompletionWorkKind } from "./generated/CompletionWorkKind";
 import type { DraftNote } from "./generated/DraftNote";
 import type { Experiment } from "./generated/Experiment";
+import type { ExperimentDraft } from "./generated/ExperimentDraft";
 import type { ExperimentStatus } from "./generated/ExperimentStatus";
 import type { Idea } from "./generated/Idea";
 import type { ImportPdfResult } from "./generated/ImportPdfResult";
@@ -40,6 +41,7 @@ export type {
   CompletionWorkKind,
   DraftNote,
   Experiment,
+  ExperimentDraft,
   ExperimentStatus,
   Idea,
   ImportPdfResult,
@@ -64,6 +66,10 @@ export type {
   Topic,
   TransferMaterial,
 };
+export interface BackupMetadata {
+  snapshotAt: number | null;
+  archiveAt: number | null;
+}
 export async function loadLibrary(): Promise<LibraryState> {
   return invoke<LibraryState>("load_library");
 }
@@ -84,6 +90,9 @@ export async function bookFilePath(bookId: string): Promise<string> {
 }
 export async function exportLibraryArchive(path: string, password: string): Promise<void> {
   return invoke("export_library_archive", { path, password });
+}
+export async function loadBackupMetadata(): Promise<BackupMetadata> {
+  return invoke<BackupMetadata>("backup_metadata");
 }
 export async function importLibraryArchive(path: string, password: string): Promise<LibraryState> {
   return invoke<LibraryState>("import_library_archive", { path, password });

@@ -10,6 +10,7 @@ use std::{
     io::{self, Write},
     iter,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 mod archive;
@@ -24,6 +25,13 @@ pub struct Library {
 pub(crate) struct ReadingStorage<'a>(&'a Library);
 pub(crate) struct ArchiveStorage<'a>(&'a Library);
 pub(crate) struct TextFileStorage;
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BackupMetadata {
+    pub(crate) snapshot_at: Option<u64>,
+    pub(crate) archive_at: Option<u64>,
+}
 
 #[derive(Deserialize, Serialize)]
 struct ArchiveManifest {
@@ -41,6 +49,21 @@ struct WorkspaceEnvelope {
 }
 
 impl Library {
+    pub(crate) fn backup_metadata(&self) -> io::Result<BackupMetadata> {
+        let snapshot_at = fs::read_dir(self.data_dir.join("snapshots"))?
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.metadata().ok()?.modified().ok())
+            .max()
+            .and_then(unix_timestamp);
+        let archive_at = fs::read_to_string(self.data_dir.join("last-archive-exported-at"))
+            .ok()
+            .and_then(|value| value.trim().parse().ok());
+        Ok(BackupMetadata {
+            snapshot_at,
+            archive_at,
+        })
+    }
+
     pub(crate) fn reading_storage(&self) -> ReadingStorage<'_> {
         ReadingStorage(self)
     }
@@ -326,6 +349,12 @@ impl Library {
         }
         Ok(())
     }
+}
+
+fn unix_timestamp(time: SystemTime) -> Option<u64> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
 }
 
 fn decode_workspace(raw: &str) -> io::Result<LibraryState> {

@@ -59,6 +59,9 @@ describe("workspace page behavior", () => {
       restoreBackup: async () => structuredClone(state),
       exportArchive: async () => true,
       importArchive: async () => structuredClone(state),
+      backupMetadata: async () => ({ snapshotAt: 1_785_283_200, archiveAt: null }),
+      checkForUpdate: async () => false,
+      exportDiagnostics: async () => true,
     });
     execute.mockImplementation(async (action) => {
       if (action.kind === "discardDraft") state.drafts = state.drafts.filter((draft) => draft.id !== action.draftId);
@@ -120,7 +123,7 @@ describe("workspace page behavior", () => {
   it("persists document mode and image inversion from the reader", async () => {
     render(WorkspacePage, { props: { context: "reader", resourceId: "book-distributed" } });
     await screen.findByText("Designing Data-Intensive Applications");
-    expect(bookUrl).toHaveBeenCalledWith("book-distributed");
+    await waitFor(() => expect(bookUrl).toHaveBeenCalledWith("book-distributed"));
 
     await fireEvent.click(screen.getByRole("button", { name: "Тёмный инвертированный режим" }));
     await waitFor(() =>
@@ -204,7 +207,6 @@ describe("workspace page behavior", () => {
   });
 
   it("derives backup dates and export prompting from persisted activity", async () => {
-    localStorage.removeItem("bookshelf-last-archive-at");
     render(WorkspacePage, { props: { context: "settings" } });
 
     await screen.findByRole("heading", { name: "Чтение и рабочее пространство" });
@@ -212,6 +214,8 @@ describe("workspace page behavior", () => {
 
     expect(screen.queryByText(/30 июля 2026, 18:40/)).toBeNull();
     expect(screen.getByText(/существенные изменения или архив давно не создавался/i)).toBeTruthy();
-    expect(screen.getByText(/последняя внутренняя копия:/i).textContent).not.toContain("ещё не создавалась");
+    await waitFor(() =>
+      expect(screen.getByText(/последняя внутренняя копия:/i).textContent).not.toContain("ещё не создавалась"),
+    );
   });
 });

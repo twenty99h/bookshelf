@@ -7,6 +7,7 @@ let state = readInitialState();
 const commands: unknown[] = [];
 type BrowserScenario = NonNullable<Window["__BOOKSHELF_TEST__"]>["scenario"];
 let scenario = (new URLSearchParams(location.search).get("scenario") as BrowserScenario | null) ?? "success";
+let archiveAt: number | null = null;
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -38,6 +39,7 @@ function exposeHarness() {
       state = fixture === "empty" ? emptyLibraryFixture() : activeLibraryFixture();
       commands.length = 0;
       scenario = "success";
+      archiveAt = null;
       persist();
     },
   };
@@ -128,6 +130,7 @@ export const browserWorkspaceCommands: WorkspaceCommands = {
   },
   async exportArchive() {
     commands.push({ kind: "exportArchive" });
+    archiveAt = 1_785_283_200;
     return true;
   },
   async importArchive() {
@@ -141,6 +144,9 @@ export const browserWorkspaceCommands: WorkspaceCommands = {
   async exportDiagnostics(entries) {
     commands.push({ kind: "exportDiagnostics", entries: entries.slice(-100) });
     return true;
+  },
+  async backupMetadata() {
+    return { snapshotAt: 1_785_283_200, archiveAt };
   },
 };
 
@@ -359,6 +365,14 @@ function applyAction(action: LibraryAction) {
         cancellationReason: "",
         nextStep: action.nextStep,
       });
+      state.experimentDrafts = state.experimentDrafts.filter((draft) => draft.ideaId !== action.ideaId);
+      break;
+    }
+    case "saveExperimentDraft": {
+      state.experimentDrafts = [
+        ...state.experimentDrafts.filter((draft) => draft.id !== action.draft.id),
+        structuredClone(action.draft),
+      ];
       break;
     }
     case "deleteBook": {
@@ -368,6 +382,7 @@ function applyAction(action: LibraryAction) {
       state.ideas = state.ideas.filter((idea) => idea.bookId !== action.bookId);
       state.ideaLinks = state.ideaLinks.filter((link) => !ideaIds.has(link.fromIdeaId) && !ideaIds.has(link.toIdeaId));
       state.experiments = state.experiments.filter((item) => !ideaIds.has(item.ideaId));
+      state.experimentDrafts = state.experimentDrafts.filter((item) => !ideaIds.has(item.ideaId));
       state.recalls = state.recalls.filter((item) => !ideaIds.has(item.ideaId));
       state.reviews = state.reviews.filter((item) => !ideaIds.has(item.ideaId));
       state.materials = state.materials
@@ -379,7 +394,7 @@ function applyAction(action: LibraryAction) {
       break;
     }
     case "completeRecall": {
-      const recall = state.recalls.find((item) => item.ideaId === action.ideaId);
+      const recall = state.recalls.find((item) => item.id === action.recallId);
       if (recall) {
         recall.answer = action.answer;
         recall.rating = action.rating;

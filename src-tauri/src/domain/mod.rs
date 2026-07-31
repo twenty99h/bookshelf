@@ -12,6 +12,8 @@ mod practice;
 mod reading;
 mod rules;
 
+pub use practice::ExperimentDraft;
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
@@ -24,6 +26,7 @@ pub struct LibraryState {
     pub topics: Vec<Topic>,
     pub idea_links: Vec<IdeaLink>,
     pub experiments: Vec<Experiment>,
+    pub experiment_drafts: Vec<ExperimentDraft>,
     pub recalls: Vec<Recall>,
     pub materials: Vec<TransferMaterial>,
     pub reviews: Vec<IdeaReview>,
@@ -509,6 +512,9 @@ pub enum LibraryAction {
         action: String,
         next_step: String,
     },
+    SaveExperimentDraft {
+        draft: ExperimentDraft,
+    },
     CompleteExperiment {
         idea_id: String,
         situation: String,
@@ -527,7 +533,7 @@ pub enum LibraryAction {
         next_step: String,
     },
     CompleteRecall {
-        idea_id: String,
+        recall_id: String,
         answer: String,
         rating: RecallRating,
         #[ts(optional = nullable)]

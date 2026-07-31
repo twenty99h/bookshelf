@@ -1,18 +1,15 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { FileArchive, Library, Menu, Sparkles } from "@lucide/svelte";
   import { Button, CheckboxField, SelectField, TextField } from "@/shared/ui";
-  import type { LibraryState } from "@/shared/api";
+  import type { BackupMetadata, LibraryState } from "@/shared/api";
 
   type SettingsSection = "interface" | "library" | "backups" | "ai";
 
   let {
-    section = $bindable(),
     library,
+    backupMetadata,
     readerMode = $bindable(),
     readerImages = $bindable(),
-    updateStatus,
-    diagnosticStatus,
     onRestoreBackup,
     onExportArchive,
     onImportArchive,
@@ -20,34 +17,30 @@
     onCheckForUpdate,
     onPersistPreferences,
   }: {
-    section: SettingsSection;
     library: LibraryState;
+    backupMetadata: BackupMetadata;
     readerMode: string;
     readerImages: boolean;
-    updateStatus: string;
-    diagnosticStatus: string;
     onRestoreBackup: () => Promise<string>;
     onExportArchive: (password: string) => Promise<string>;
     onImportArchive: (password: string) => Promise<string>;
-    onExportDiagnostics: () => Promise<void>;
-    onCheckForUpdate: () => Promise<void>;
+    onExportDiagnostics: () => Promise<string>;
+    onCheckForUpdate: () => Promise<string>;
     onPersistPreferences: () => Promise<void>;
   } = $props();
 
   let backupPassword = $state("");
   let backupStatus = $state("");
-  let lastArchiveAt = $state<number | null>(null);
-  const snapshotAt = $derived(Math.max(0, ...library.milestones.map((milestone) => milestone.occurredAt)) || null);
+  let section = $state<SettingsSection>("interface");
+  let updateStatus = $state("");
+  let diagnosticStatus = $state("");
+  const snapshotAt = $derived(backupMetadata.snapshotAt);
+  const lastArchiveAt = $derived(backupMetadata.archiveAt);
   const changesSinceArchive = $derived(
     library.milestones.filter((milestone) => !lastArchiveAt || milestone.occurredAt > lastArchiveAt).length,
   );
   const archiveIsOld = $derived(!lastArchiveAt || Date.now() / 1_000 - lastArchiveAt > 30 * 86_400);
   const shouldPromptExport = $derived(changesSinceArchive >= 5 || (archiveIsOld && changesSinceArchive > 0));
-
-  onMount(() => {
-    const stored = Number(localStorage.getItem("bookshelf-last-archive-at"));
-    lastArchiveAt = stored > 0 ? stored : null;
-  });
 
   function formatDate(timestamp: number | null) {
     return timestamp
@@ -63,15 +56,21 @@
   async function exportArchive() {
     backupStatus = "Экспорт…";
     backupStatus = await onExportArchive(backupPassword);
-    if (backupStatus === "Переносимый архив сохранён") {
-      lastArchiveAt = Math.floor(Date.now() / 1_000);
-      localStorage.setItem("bookshelf-last-archive-at", String(lastArchiveAt));
-    }
   }
 
   async function importArchive() {
     backupStatus = "Импорт…";
     backupStatus = await onImportArchive(backupPassword);
+  }
+
+  async function checkForUpdate() {
+    updateStatus = "Проверяем подписанное обновление…";
+    updateStatus = await onCheckForUpdate();
+  }
+
+  async function exportDiagnostics() {
+    diagnosticStatus = "Экспортируем локальный журнал…";
+    diagnosticStatus = await onExportDiagnostics();
   }
 
   const navigation = [
@@ -125,7 +124,7 @@
         <div class="mt-6 rounded-lg border border-white/8 bg-night/30 p-5">
           <b>Диагностический журнал</b>
           <p class="mt-2 text-sm text-mist-dim">Хранятся только последние 100 локальных записей текущего запуска.</p>
-          <Button onclick={onExportDiagnostics}>Экспортировать журнал</Button>{#if diagnosticStatus}<p
+          <Button onclick={exportDiagnostics}>Экспортировать журнал</Button>{#if diagnosticStatus}<p
               class="mt-3 text-sm text-mist-dim"
               role="status"
             >
@@ -185,7 +184,7 @@
           <b>Обновления Bookshelf</b>
           <p class="mt-1 text-sm text-mist-dim">Версия 0.1.0 · проверка выполняется только явно.</p>
         </div>
-        <Button onclick={onCheckForUpdate}>Проверить обновления</Button>
+        <Button onclick={checkForUpdate}>Проверить обновления</Button>
       </div>
       {#if updateStatus}<p class="mt-3 text-sm text-mist-dim" role="status">{updateStatus}</p>{/if}
     </section>

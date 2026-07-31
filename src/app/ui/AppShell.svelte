@@ -4,23 +4,21 @@
   import { resolve } from "$app/paths";
   import { page } from "$app/state";
   import { BookCopy, Brain, Command, FlaskConical, Gauge, Library, Settings, StickyNote } from "@lucide/svelte";
-  import { createWorkspaceCommands, type WorkspaceCommands, type WorkspaceContext } from "@/pages/workspace";
+  import { provideWorkspaceSession, type WorkspaceContext } from "@/pages/workspace";
   import type { LibraryState } from "@/shared/api";
   import CommandPalette from "./CommandPalette.svelte";
 
   let { children }: { children: Snippet } = $props();
-  let commands = $state<WorkspaceCommands | null>(null);
-  let library = $state.raw<LibraryState | null>(null);
+  const session = provideWorkspaceSession();
   let paletteOpen = $state(false);
   let paletteQuery = $state("");
   let paletteResults = $state<{ id: string; kind: string; title: string; context: string }[]>([]);
   const context = $derived(contextForPath(page.url.pathname));
   const resourceId = $derived(page.url.pathname.split("/").filter(Boolean).at(-1));
-  const title = $derived(contextTitle(context, resourceId, library));
+  const title = $derived(contextTitle(context, resourceId, session.library));
 
   onMount(async () => {
-    commands = await createWorkspaceCommands();
-    library = await commands.load();
+    await session.load();
   });
 
   function contextForPath(pathname: string): WorkspaceContext {
@@ -54,8 +52,8 @@
   }
 
   async function searchPalette() {
-    if (!commands) return;
-    paletteResults = await commands.search(paletteQuery);
+    if (!session.commands) return;
+    paletteResults = await session.commands.search(paletteQuery);
   }
 
   function openPaletteResult(result: { id: string; kind: string }) {
@@ -65,8 +63,8 @@
     else if (result.kind === "topic") void goto(resolve(`/knowledge?topic=${encodeURIComponent(result.id)}`));
     else if (result.kind === "draft") void goto(resolve(`/drafts?draft=${encodeURIComponent(result.id)}`));
     else if (result.kind === "material") {
-      const material = library?.materials.find((item) => item.id === result.id);
-      const idea = library?.ideas.find((item) => material?.ideaIds.includes(item.id));
+      const material = session.library?.materials.find((item) => item.id === result.id);
+      const idea = session.library?.ideas.find((item) => material?.ideaIds.includes(item.id));
       const source = idea?.fragments[0];
       if (idea && source) void goto(resolve(`/reader/${encodeURIComponent(idea.bookId)}?sourcePage=${source.page}`));
     }
@@ -99,7 +97,7 @@
         <nav class="grid gap-1">
           {@render navItem("dashboard", "/", "Рабочий стол", Gauge)}
           {@render navItem("library", "/library", "Библиотека", Library)}
-          {@render navItem("drafts", "/drafts", "Черновики", StickyNote, library?.drafts.length)}
+          {@render navItem("drafts", "/drafts", "Черновики", StickyNote, session.library?.drafts.length)}
           {@render navItem("knowledge", "/knowledge", "Знания", Brain)}
           {@render navItem("practice", "/practice", "Практика", FlaskConical)}
         </nav>

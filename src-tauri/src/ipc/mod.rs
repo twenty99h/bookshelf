@@ -215,6 +215,18 @@ pub(crate) fn export_library_archive(
 }
 
 #[tauri::command]
+pub(crate) fn backup_metadata(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::adapters::sqlite_repository::BackupMetadata, CommandError> {
+    state
+        .library
+        .lock()
+        .map_err(|_| CommandError::library_access())?
+        .backup_metadata()
+        .map_err(|error| CommandError::persistence("прочитать сведения о резервных копиях", error))
+}
+
+#[tauri::command]
 pub(crate) fn import_library_archive(
     path: String,
     password: String,

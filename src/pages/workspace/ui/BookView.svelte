@@ -2,18 +2,24 @@
   import { resolve } from "$app/paths";
   import { BookOpen, MoreHorizontal } from "@lucide/svelte";
   import { Button } from "@/shared/ui";
-  import type { Book, LibraryAction, LibraryState } from "@/shared/api";
+  import type { Book, LibraryState } from "@/shared/api";
   let {
     library,
     selectedBook,
     bookStatus,
-    onRun,
+    onActivate,
+    onArchive,
+    onRestore,
+    onRepeat,
     onDelete,
   }: {
     library: LibraryState;
     selectedBook: Book | null;
     bookStatus: (book: Book) => string;
-    onRun: (action: LibraryAction, message?: string) => Promise<boolean>;
+    onActivate: () => Promise<void>;
+    onArchive: () => Promise<void>;
+    onRestore: () => Promise<void>;
+    onRepeat: () => Promise<void>;
     onDelete: () => void;
   } = $props();
 
@@ -57,9 +63,7 @@
           class="inline-flex min-h-11 items-center gap-2 rounded-md bg-iris-strong px-5 font-semibold text-white no-underline"
           href={resolve("/reader/[bookId]", { bookId: selectedBook.id })}
           ><BookOpen class="size-4" />Продолжить чтение</a
-        ><Button onclick={() => onRun({ kind: "activateStudy", bookId: selectedBook.id }, "Книга стала активной")}
-          >Сделать активной</Button
-        >
+        ><Button onclick={onActivate}>Сделать активной</Button>
         <div class="relative">
           <button
             aria-label="Другие действия"
@@ -71,19 +75,15 @@
             >
               {#if selectedBook.archived}<button
                   class="rounded px-3 py-2 text-left text-sm text-iris hover:bg-slate"
-                  onclick={() => onRun({ kind: "restoreBook", bookId: selectedBook.id }, "Книга возвращена из архива")}
-                  >Вернуть из архива</button
+                  onclick={onRestore}>Вернуть из архива</button
                 >
               {:else}<button
                   class="rounded px-3 py-2 text-left text-sm text-mist-dim hover:bg-slate"
-                  onclick={() => onRun({ kind: "archiveBook", bookId: selectedBook.id }, "Книга перемещена в архив")}
-                  >Архивировать</button
+                  onclick={onArchive}>Архивировать</button
                 >{/if}
               {#if selectedBook.studyStatus === "completed"}<button
                   class="rounded px-3 py-2 text-left text-sm text-iris hover:bg-slate"
-                  onclick={() =>
-                    onRun({ kind: "startRepeatStudy", bookId: selectedBook.id }, "Начат новый цикл изучения")}
-                  >Начать повторное изучение</button
+                  onclick={onRepeat}>Начать повторное изучение</button
                 >{/if}
               <button class="rounded px-3 py-2 text-left text-sm text-danger hover:bg-danger/10" onclick={onDelete}
                 >Удалить навсегда</button

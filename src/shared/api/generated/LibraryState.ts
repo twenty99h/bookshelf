@@ -2,6 +2,7 @@
 import type { Book } from "./Book";
 import type { DraftNote } from "./DraftNote";
 import type { Experiment } from "./Experiment";
+import type { ExperimentDraft } from "./ExperimentDraft";
 import type { Idea } from "./Idea";
 import type { IdeaLink } from "./IdeaLink";
 import type { IdeaReview } from "./IdeaReview";
@@ -11,4 +12,4 @@ import type { StudyMilestone } from "./StudyMilestone";
 import type { Topic } from "./Topic";
 import type { TransferMaterial } from "./TransferMaterial";
 
-export type LibraryState = { books: Array<Book>, drafts: Array<DraftNote>, ideas: Array<Idea>, topics: Array<Topic>, ideaLinks: Array<IdeaLink>, experiments: Array<Experiment>, recalls: Array<Recall>, materials: Array<TransferMaterial>, reviews: Array<IdeaReview>, milestones: Array<StudyMilestone>, completionDrafts: Array<StudyCompletionDraft>, workspaceNote: string, activeStudyBookId: string | null, };
+export type LibraryState = { books: Array<Book>, drafts: Array<DraftNote>, ideas: Array<Idea>, topics: Array<Topic>, ideaLinks: Array<IdeaLink>, experiments: Array<Experiment>, experimentDrafts: Array<ExperimentDraft>, recalls: Array<Recall>, materials: Array<TransferMaterial>, reviews: Array<IdeaReview>, milestones: Array<StudyMilestone>, completionDrafts: Array<StudyCompletionDraft>, workspaceNote: string, activeStudyBookId: string | null, };

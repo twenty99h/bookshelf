@@ -2,27 +2,31 @@
   import { resolve } from "$app/paths";
   import { Check } from "@lucide/svelte";
   import { Button, SelectField, TextArea } from "@/shared/ui";
-  import type { LibraryAction, LibraryState } from "@/shared/api";
+  import type { LibraryState } from "@/shared/api";
 
   type Draft = LibraryState["drafts"][number];
 
   let {
     library,
     focusedDraft,
+    bookFilterId,
     busy,
     onSelectDraft,
     onResolve,
     onAttach,
-    onRun,
+    onDefer,
+    onDiscard,
     onExport,
   }: {
     library: LibraryState;
     focusedDraft: Draft | null;
+    bookFilterId: string;
     busy: boolean;
     onSelectDraft: (draftId: string) => void;
     onResolve: (formulation: string) => Promise<void>;
     onAttach: (ideaId: string) => Promise<void>;
-    onRun: (action: LibraryAction, message?: string) => Promise<boolean>;
+    onDefer: () => Promise<void>;
+    onDiscard: () => Promise<void>;
     onExport: () => Promise<void>;
   } = $props();
 
@@ -30,6 +34,7 @@
   let formulation = $state("");
   let attachIdeaId = $state("");
   const compatibleIdeas = $derived(library.ideas.filter((idea) => idea.bookId === focusedDraft?.bookId));
+  const visibleDrafts = $derived(library.drafts.filter((draft) => !bookFilterId || draft.bookId === bookFilterId));
 
   function selectDraft(draftId: string) {
     onSelectDraft(draftId);
@@ -78,7 +83,7 @@
   </section>
 {:else if mode === "list"}
   <section class="rounded-xl border border-white/8 bg-slate">
-    {#each library.drafts as draft (draft.id)}
+    {#each visibleDrafts as draft (draft.id)}
       <article class="grid grid-cols-[180px_1fr_160px] gap-5 border-b border-white/8 p-5">
         <span class="text-sm text-mist-dim"
           >{draft.section}<small class="block font-mono text-amber">стр. {draft.page}</small></span
@@ -110,7 +115,7 @@
     </article>
     <article class="rounded-xl border border-white/8 bg-slate p-7">
       <p class="font-mono text-xs uppercase tracking-[.14em] text-iris">
-        Решение {library.drafts.length > 1 ? `· ещё ${library.drafts.length - 1}` : ""}
+        Решение {visibleDrafts.length > 1 ? `· ещё ${visibleDrafts.length - 1}` : ""}
       </p>
       <h2 class="mt-3 text-2xl font-semibold">Сформулируйте самостоятельную идею</h2>
       <p class="mt-2 text-sm leading-6 text-mist-dim">Цитата останется источником, а не заменит вашу мысль.</p>
@@ -124,13 +129,9 @@
       </div>
       <div class="mt-5 flex flex-wrap gap-2">
         <Button variant="primary" onclick={resolveDraft} disabled={!formulation.trim() || busy}>Создать идею</Button>
-        <Button onclick={() => onRun({ kind: "deferDraft", draftId: focusedDraft.id }, "Заметка отложена")}
-          >Отложить</Button
-        >
+        <Button onclick={onDefer}>Отложить</Button>
         <Button onclick={onExport}>Экспортировать</Button>
-        <Button onclick={() => onRun({ kind: "discardDraft", draftId: focusedDraft.id }, "Черновая заметка удалена")}
-          >Удалить</Button
-        >
+        <Button onclick={onDiscard}>Удалить</Button>
       </div>
       <div class="mt-7 grid gap-3 border-t border-white/8 pt-5">
         <SelectField

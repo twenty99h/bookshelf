@@ -10,6 +10,7 @@ export function emptyLibraryFixture(): LibraryState {
     topics: [],
     ideaLinks: [],
     experiments: [],
+    experimentDrafts: [],
     recalls: [],
     materials: [],
     reviews: [],

@@ -548,9 +548,15 @@ fn corrected_outline_rejects_cycles_and_duplicate_ids() {
 fn recall_rating_owns_the_default_schedule_but_accepts_reader_override() {
     let mut state = LibraryState::default();
     state.ideas.push(Idea::for_test("idea", "book"));
+    state.recalls.push(Recall {
+        id: "recall".into(),
+        idea_id: "idea".into(),
+        next_at: 1,
+        ..Recall::default()
+    });
     state
         .apply(LibraryAction::CompleteRecall {
-            idea_id: "idea".into(),
+            recall_id: "recall".into(),
             answer: "Суть, условия и ограничения".into(),
             rating: RecallRating::Partial,
             next_at: Some(123_456),
@@ -558,6 +564,35 @@ fn recall_rating_owns_the_default_schedule_but_accepts_reader_override() {
         .unwrap();
     assert_eq!(state.recalls[0].next_at, 123_456);
     assert_eq!(state.recalls[0].rating, RecallRating::Partial);
+}
+
+#[test]
+fn unfinished_experiment_draft_persists_until_the_intent_is_created() {
+    let mut state = LibraryState::default();
+    state.ideas.push(Idea::for_test("idea", "book"));
+    let draft = ExperimentDraft {
+        id: "experiment-draft:idea".into(),
+        idea_id: "idea".into(),
+        situation: "Потеря аренды".into(),
+        action: "Восстановить журнал".into(),
+        next_step: "Наблюдать результат".into(),
+    };
+    state
+        .apply(LibraryAction::SaveExperimentDraft {
+            draft: draft.clone(),
+        })
+        .unwrap();
+    assert_eq!(state.experiment_drafts, vec![draft.clone()]);
+
+    state
+        .apply(LibraryAction::CreateExperiment {
+            idea_id: draft.idea_id,
+            situation: draft.situation,
+            action: draft.action,
+            next_step: draft.next_step,
+        })
+        .unwrap();
+    assert!(state.experiment_drafts.is_empty());
 }
 
 #[test]
@@ -741,6 +776,15 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
             .windows(marker.len())
             .any(|window| window == marker));
     }
+    let embedded_font = complex_document
+        .objects
+        .values()
+        .filter_map(|object| object.as_stream().ok())
+        .find(|stream| stream.dict.has(b"Length1"))
+        .expect("embedded TrueType stream");
+    let embedded_font = embedded_font.decompressed_content().unwrap();
+    assert!(embedded_font.len() > 100_000);
+    assert_eq!(&embedded_font[..4], &[0x00, 0x01, 0x00, 0x00]);
     let extracted_text = complex_document
         .get_pages()
         .values()
@@ -910,6 +954,9 @@ fn encrypted_archive_round_trip_restores_state_and_rejects_a_wrong_password() {
         "надёжный пароль",
     )
     .unwrap();
+    let metadata = source.backup_metadata().unwrap();
+    assert!(metadata.snapshot_at.is_some());
+    assert!(metadata.archive_at.is_some());
 
     let target_dir = test_data_dir();
     let target = Library::open(&target_dir).unwrap();

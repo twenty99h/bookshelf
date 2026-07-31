@@ -13,3 +13,4 @@ export { default as Surface } from "./Surface.svelte";
 export { default as SelectField } from "./SelectField.svelte";
 export { default as Eyebrow } from "./Eyebrow.svelte";
 export { default as TextArea } from "./TextArea.svelte";
+export { default as RangeField } from "./RangeField.svelte";

@@ -1,43 +1,105 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { Button, CheckboxField, SelectField, TextArea } from "@/shared/ui";
-  import type { Book, CompletionWorkDecision, LibraryState } from "@/shared/api";
+  import type { Book, CompletionWorkDecision, LibraryState, StudyCompletionDraft } from "@/shared/api";
 
   type WorkItem = { id: string; kind: CompletionWorkDecision["kind"]; label: string };
 
   let {
-    step,
     library,
     selectedBook,
-    significantIdeas = $bindable(),
-    retrospective = $bindable(),
-    unfinishedWorkDecision = $bindable(),
-    continuingWork = $bindable(),
-    workItems,
-    workDecisions,
     onCompleteReading,
     onSaveStep,
-    onSetWorkDecision,
-    hasDecisions,
     onFinish,
   }: {
-    step: number;
     library: LibraryState;
     selectedBook: Book | null;
-    significantIdeas: string[];
-    retrospective: string;
-    unfinishedWorkDecision: string;
-    continuingWork: string;
-    workItems: WorkItem[];
-    workDecisions: CompletionWorkDecision[];
     onCompleteReading: () => Promise<void>;
-    onSaveStep: (step: number) => Promise<void>;
-    onSetWorkDecision: (workId: string, kind: CompletionWorkDecision["kind"], decision: string) => void;
-    hasDecisions: (kind: "experiment" | "other") => boolean;
-    onFinish: () => Promise<void>;
+    onSaveStep: (draft: StudyCompletionDraft) => Promise<void>;
+    onFinish: (draft: StudyCompletionDraft) => Promise<void>;
   } = $props();
+
+  let step = $state(1);
+  let significantIdeas = $state<string[]>([]);
+  let retrospective = $state("");
+  let unfinishedWorkDecision = $state("");
+  let continuingWork = $state("");
+  let workDecisions = $state<CompletionWorkDecision[]>([]);
+
+  const workItems = $derived.by(() => {
+    if (!selectedBook) return [];
+    const ideaIds = new Set(library.ideas.filter((idea) => idea.bookId === selectedBook.id).map((idea) => idea.id));
+    return [
+      ...library.drafts
+        .filter((draft) => draft.bookId === selectedBook.id)
+        .map((draft) => ({ id: draft.id, kind: "draft" as const, label: `Черновик · ${draft.section}` })),
+      ...library.reviews
+        .filter((review) => review.pending && ideaIds.has(review.ideaId))
+        .map((review) => ({ id: review.id, kind: "review" as const, label: "Ожидающая проверка идеи" })),
+      ...library.recalls
+        .filter((recall) => ideaIds.has(recall.ideaId))
+        .map((recall) => ({ id: recall.id, kind: "recall" as const, label: "Следующее восстановление знания" })),
+      ...library.experiments
+        .filter(
+          (experiment) => ideaIds.has(experiment.ideaId) && !["completed", "cancelled"].includes(experiment.status),
+        )
+        .map((experiment) => ({
+          id: experiment.id,
+          kind: "experiment" as const,
+          label: `Эксперимент · ${experiment.situation}`,
+        })),
+    ] satisfies WorkItem[];
+  });
+
+  onMount(() => {
+    const draft = library.completionDrafts.find((item) => item.bookId === selectedBook?.id);
+    if (!draft) return;
+    step = draft.step;
+    significantIdeas = [...draft.significantIdeaIds];
+    retrospective = draft.retrospective;
+    unfinishedWorkDecision = draft.unfinishedWorkDecision;
+    continuingWork = draft.continuingWork;
+    workDecisions = draft.workDecisions.map((decision) => ({ ...decision }));
+  });
 
   function toggleIdea(ideaId: string, checked: boolean) {
     significantIdeas = checked ? [...significantIdeas, ideaId] : significantIdeas.filter((id) => id !== ideaId);
+  }
+
+  function draft(nextStep = step): StudyCompletionDraft {
+    return {
+      bookId: selectedBook?.id ?? "",
+      step: nextStep,
+      readingConfirmed: nextStep > 1,
+      significantIdeaIds: [...significantIdeas],
+      retrospective,
+      unfinishedWorkDecision,
+      continuingWork,
+      workDecisions: workDecisions.map((decision) => ({ ...decision })),
+    };
+  }
+
+  async function saveStep(nextStep: number) {
+    await onSaveStep(draft(nextStep));
+    step = nextStep;
+  }
+
+  function setWorkDecision(workId: string, kind: CompletionWorkDecision["kind"], decision: string) {
+    workDecisions = [
+      ...workDecisions.filter((item) => item.workId !== workId || item.kind !== kind),
+      { workId, kind, decision },
+    ];
+  }
+
+  function hasDecisions(kind: "experiment" | "other") {
+    const items = workItems.filter((item) =>
+      kind === "experiment" ? item.kind === "experiment" : item.kind !== "experiment",
+    );
+    return items.every((item) =>
+      workDecisions.some(
+        (decision) => decision.workId === item.id && decision.kind === item.kind && decision.decision.trim(),
+      ),
+    );
   }
 </script>
 
@@ -60,7 +122,15 @@
       <p class="mt-4 max-w-2xl leading-7 text-mist-dim">
         Это фиксирует окончание работы с текстом, но ещё не завершает изучение книги.
       </p>
-      <div class="mt-7"><Button variant="primary" onclick={onCompleteReading}>Чтение завершено</Button></div>
+      <div class="mt-7">
+        <Button
+          variant="primary"
+          onclick={async () => {
+            await onCompleteReading();
+            await saveStep(2);
+          }}>Чтение завершено</Button
+        >
+      </div>
     {:else if step === 2}
       <h2 class="mt-3 text-3xl font-semibold">Выберите 3–7 значимых идей</h2>
       <div class="mt-6 grid gap-3">
@@ -75,14 +145,14 @@
         <Button
           variant="primary"
           disabled={significantIdeas.length < 3 || significantIdeas.length > 7}
-          onclick={() => onSaveStep(3)}>Продолжить</Button
+          onclick={() => saveStep(3)}>Продолжить</Button
         >
       </div>
     {:else if step === 3}
       <h2 class="mt-3 text-3xl font-semibold">Ретроспектива книги</h2>
       <p class="mt-3 text-mist-dim">Что изменилось в вашем понимании или действиях? Итог пишете вы.</p>
       <div class="mt-6"><TextArea id="retrospective" label="Авторский итог" bind:value={retrospective} /></div>
-      <Button variant="primary" disabled={!retrospective.trim()} onclick={() => onSaveStep(4)}
+      <Button variant="primary" disabled={!retrospective.trim()} onclick={() => saveStep(4)}
         >Сохранить черновик и продолжить</Button
       >
     {:else if step === 4}
@@ -103,7 +173,7 @@
                 { value: "keep-reference", label: "Оставить как справку" },
                 { value: "close-separately", label: "Закрыть отдельно" },
               ]}
-              onValueChange={(value) => onSetWorkDecision(item.id, item.kind, value)}
+              onValueChange={(value) => setWorkDecision(item.id, item.kind, value)}
             />
           </div>{:else}<p class="text-sm text-mist-dim">Открытых черновиков, проверок и восстановлений нет.</p>{/each}
       </div>
@@ -117,7 +187,7 @@
       <Button
         variant="primary"
         disabled={!hasDecisions("other") || !unfinishedWorkDecision.trim()}
-        onclick={() => onSaveStep(5)}>Продолжить</Button
+        onclick={() => saveStep(5)}>Продолжить</Button
       >
     {:else if step === 5}
       <h2 class="mt-3 text-3xl font-semibold">Продолжающиеся эксперименты</h2>
@@ -137,14 +207,14 @@
                 { value: "pause", label: "Приостановить вручную" },
                 { value: "review", label: "Подвести итог отдельно" },
               ]}
-              onValueChange={(value) => onSetWorkDecision(item.id, item.kind, value)}
+              onValueChange={(value) => setWorkDecision(item.id, item.kind, value)}
             />
           </div>{:else}<p class="text-sm text-mist-dim">Продолжающихся экспериментов нет.</p>{/each}
       </div>
       <div class="mt-6">
         <TextArea id="continuing-work" label="Комментарий к продолжающейся практике" bind:value={continuingWork} />
       </div>
-      <Button variant="primary" disabled={!hasDecisions("experiment")} onclick={() => onSaveStep(6)}
+      <Button variant="primary" disabled={!hasDecisions("experiment")} onclick={() => saveStep(6)}
         >Перейти к подтверждению</Button
       >
     {:else}
@@ -157,7 +227,7 @@
       <p class="mt-5 text-sm leading-6 text-mist-dim">
         Завершится только цикл изучения. Продолжающиеся эксперименты останутся активными.
       </p>
-      <Button variant="primary" onclick={onFinish}>Завершить изучение</Button>
+      <Button variant="primary" onclick={() => onFinish(draft())}>Завершить изучение</Button>
     {/if}
   </section>
 </div>

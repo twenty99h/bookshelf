@@ -1,7 +1,7 @@
 <script lang="ts">
   import { resolve } from "$app/paths";
   import { ArrowLeft, ListTree, PanelRight, Search, StickyNote, X, ZoomIn, ZoomOut } from "@lucide/svelte";
-  import { Button, TextArea, TextField } from "@/shared/ui";
+  import { Button, RangeField, TextArea, TextField } from "@/shared/ui";
   import type { Book, LibraryState, OutlineItem, SourceFragment } from "@/shared/api";
   import ContinuousPdfReader from "./reader/ContinuousPdfReader.svelte";
 
@@ -368,16 +368,16 @@
                     ><span class="font-mono text-amber">стр. {result.page}</span> {result.excerpt}</button
                   >{/each}{/if}{/if}
           </div>
-          <label class="border-t border-white/8 p-3 text-[10px] text-mist-faint"
-            >Ширина панели <input
-              aria-label="Ширина панели"
-              type="range"
-              min="320"
-              max="560"
+          <div class="border-t border-white/8 p-3">
+            <RangeField
+              id="reader-sidebar-width"
+              label="Ширина панели"
+              min={320}
+              max={560}
               bind:value={sidebarWidth}
-              onchange={onPersistPreferences}
-            /></label
-          >
+              onCommit={onPersistPreferences}
+            />
+          </div>
         </div>{/if}
     </aside>
   </div>

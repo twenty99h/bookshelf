@@ -10,46 +10,89 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { resolve } from "$app/paths";
-  import { Sparkles } from "@lucide/svelte";
-  import { Button, CheckboxField, SelectField, TextArea, TextField } from "@/shared/ui";
-  import type { Book, Idea, IdeaAssignment, IdeaRelation, LibraryState } from "@/shared/api";
+  import { Sparkles, X } from "@lucide/svelte";
+  import { Button, CheckboxField, DialogModal, SelectField, TextArea, TextField } from "@/shared/ui";
+  import type { Book, Idea, IdeaAssignment, IdeaRelation, LibraryState, ReviewDecision } from "@/shared/api";
   let {
     library,
     selectedIdea,
+    bookFilterId,
     selectedTopic = $bindable(),
     bookForIdea,
     onSave,
     onLink,
     onPrepareReview,
+    onRunReview,
+    onResolveReview,
   }: {
     library: LibraryState;
     selectedIdea: Idea | null;
+    bookFilterId: string;
     selectedTopic: string;
     bookForIdea: (idea: Idea) => Book | undefined;
     onSave: (formulation: string, assignments: IdeaAssignment[]) => Promise<void>;
     onLink: (relatedIdeaId: string, relation: IdeaRelation) => Promise<void>;
-    onPrepareReview: () => Promise<void>;
+    onPrepareReview: () => Promise<string>;
+    onRunReview: (approvedPackage: string) => Promise<string>;
+    onResolveReview: (
+      decision: Exclude<ReviewDecision, "pending">,
+      formulation: string,
+      conclusion: string,
+    ) => Promise<boolean>;
   } = $props();
 
   let formulation = $state("");
   let assignments = $state<IdeaAssignment[]>([]);
   let relatedIdeaId = $state("");
   let relation = $state<IdeaRelation>("complements");
+  let detailOpen = $state(true);
+  let codexOpen = $state(false);
+  let codexPackage = $state("");
+  let codexResult = $state("");
+  let reviewFormulation = $state("");
+  let reviewConclusion = $state("");
   const relatedIdeas = $derived(
     library.ideas.filter((idea) => idea.bookId === selectedIdea?.bookId && idea.id !== selectedIdea?.id),
+  );
+  const pendingReview = $derived(
+    library.reviews.find(
+      (review) => review.ideaId === selectedIdea?.id && review.requestKind === "ideaReview" && review.pending,
+    ) ?? null,
   );
 
   onMount(() => {
     formulation = selectedIdea?.formulation ?? "";
     assignments = [...(selectedIdea?.assignments ?? [])];
+    reviewFormulation = selectedIdea?.formulation ?? "";
   });
+
+  function focusCompactDrawer(node: HTMLElement) {
+    if (matchMedia("(max-width: 1280px)").matches) queueMicrotask(() => node.focus());
+  }
 
   function toggleAssignment(assignment: IdeaAssignment, checked: boolean) {
     assignments = checked
       ? [...new Set([...assignments, assignment])]
       : assignments.filter((candidate) => candidate !== assignment);
   }
+
+  async function prepareReview() {
+    codexPackage = await onPrepareReview();
+    codexResult = "";
+    codexOpen = Boolean(codexPackage);
+  }
+
+  async function resolveReview(decision: Exclude<ReviewDecision, "pending">) {
+    const saved = await onResolveReview(decision, reviewFormulation, reviewConclusion);
+    if (saved && decision !== "later") codexOpen = false;
+  }
 </script>
+
+<svelte:window
+  onkeydown={(event) => {
+    if (event.key === "Escape" && matchMedia("(max-width: 1280px)").matches) detailOpen = false;
+  }}
+/>
 
 <div class="mb-5 flex items-end justify-between">
   <p class="max-w-xl text-sm leading-6 text-mist-dim">
@@ -72,7 +115,7 @@
     <div class="border-b border-white/8 p-4">
       <TextField id="knowledge-search" ariaLabel="Поиск по знаниям" placeholder="Найти формулировку" />
     </div>
-    {#each library!.ideas.filter((idea) => selectedTopic === "all" || idea.topicIds.includes(selectedTopic)) as idea (idea.id)}<a
+    {#each library!.ideas.filter((idea) => (!bookFilterId || idea.bookId === bookFilterId) && (selectedTopic === "all" || idea.topicIds.includes(selectedTopic))) as idea (idea.id)}<a
         href={resolve("/knowledge/[ideaId]", { ideaId: idea.id })}
         aria-current={selectedIdea?.id === idea.id ? "true" : undefined}
         class="block border-b border-white/8 p-5 text-mist no-underline hover:bg-white/[.025] aria-[current=true]:border-l-2 aria-[current=true]:border-l-iris aria-[current=true]:bg-iris/[.07]"
@@ -86,11 +129,19 @@
         </div></a
       >{/each}
   </div>
-  {#if selectedIdea}<article
-      class="overflow-auto p-8 max-[1280px]:fixed max-[1280px]:inset-y-4 max-[1280px]:right-4 max-[1280px]:z-30 max-[1280px]:w-[min(720px,calc(100vw-2rem))] max-[1280px]:rounded-xl max-[1280px]:border max-[1280px]:border-white/10 max-[1280px]:bg-slate max-[1280px]:shadow-2xl"
+  {#if selectedIdea && detailOpen}<article
+      {@attach focusCompactDrawer}
+      tabindex="-1"
+      aria-labelledby="knowledge-detail-title"
+      class="knowledge-detail overflow-auto p-8 outline-none"
     >
+      <button
+        class="knowledge-drawer-close ml-auto hidden size-10 place-items-center rounded-md border border-white/10"
+        aria-label="Закрыть идею"
+        onclick={() => (detailOpen = false)}><X class="size-4" /></button
+      >
       <p class="font-mono text-xs uppercase tracking-[.14em] text-iris">Идея книги</p>
-      <h2 class="mt-4 max-w-4xl text-3xl font-semibold leading-[1.3] tracking-[-.025em]">
+      <h2 id="knowledge-detail-title" class="mt-4 max-w-4xl text-3xl font-semibold leading-[1.3] tracking-[-.025em]">
         {selectedIdea.formulation}
       </h2>
       <section class="mt-7 grid gap-4 rounded-lg border border-white/8 bg-night/25 p-5">
@@ -186,7 +237,59 @@
           Перед запуском вы увидите пакет из инструкции, этого источника и своей формулировки. Другие записи и PDF
           целиком не передаются.
         </p>
-        <Button onclick={onPrepareReview}>Подготовить проверку</Button>
+        <Button onclick={prepareReview}>Подготовить проверку</Button>
       </section>
     </article>{/if}
 </section>
+
+<DialogModal
+  bind:open={codexOpen}
+  title="Проверка идеи Codex"
+  description="Проверьте минимальный пакет перед явной отправкой. PDF и другие записи не включены."
+>
+  {#snippet trigger()}<span class="sr-only">Открыть проверку идеи</span>{/snippet}
+  <TextArea id="codex-package" label="Подтверждаемый пакет" bind:value={codexPackage} />
+  <Button
+    variant="primary"
+    disabled={!codexPackage.trim()}
+    onclick={async () => (codexResult = await onRunReview(codexPackage))}>Запустить проверку</Button
+  >
+  {#if pendingReview}<section class="grid gap-4 rounded-md border border-iris/25 bg-night/40 p-4">
+      <div>
+        <b>Обратная связь</b>
+        <p class="mt-2 whitespace-pre-wrap text-sm leading-6">{pendingReview.response}</p>
+      </div>
+      <TextArea id="review-formulation" label="Авторская формулировка" bind:value={reviewFormulation} />
+      <TextArea id="review-conclusion" label="Необязательный авторский вывод" bind:value={reviewConclusion} />
+      <div class="flex flex-wrap gap-2">
+        <Button variant="primary" disabled={!reviewFormulation.trim()} onclick={() => resolveReview("refined")}
+          >Уточнить идею</Button
+        ><Button onclick={() => resolveReview("unchanged")}>Оставить без изменений</Button><Button
+          onclick={() => resolveReview("later")}>Вернуться позже</Button
+        >
+      </div>
+    </section>{/if}
+  {#if codexResult}<p class="rounded-md border border-white/8 bg-night/40 p-4 text-sm" role="status">
+      {codexResult}
+    </p>{/if}
+</DialogModal>
+
+<style>
+  @media (max-width: 1280px) {
+    .knowledge-detail {
+      position: fixed;
+      inset-block: 1rem;
+      right: 1rem;
+      z-index: 30;
+      width: min(720px, calc(100vw - 2rem));
+      border: 1px solid rgb(255 255 255 / 0.1);
+      border-radius: 0.75rem;
+      background: var(--color-slate);
+      box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+    }
+
+    .knowledge-drawer-close {
+      display: grid;
+    }
+  }
+</style>

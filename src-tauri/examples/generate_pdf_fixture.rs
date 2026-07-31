@@ -3,22 +3,28 @@ extern crate lopdf;
 
 use lopdf::content::{Content, Operation};
 use lopdf::{Bookmark, Document, Object, Stream};
+use std::fs;
 
 fn main() {
     let mut document = Document::with_version("1.7");
     let pages_id = document.new_object_id();
+    let font_path = std::env::var("BOOKSHELF_FIXTURE_FONT")
+        .unwrap_or_else(|_| "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
+    let font_bytes = fs::read(&font_path)
+        .unwrap_or_else(|error| panic!("read fixture font {font_path}: {error}"));
+    assert!(font_bytes.starts_with(&[0x00, 0x01, 0x00, 0x00]));
     let embedded_font_file = document.add_object(Stream::new(
-        dictionary! { "Length1" => 8 },
-        b"BOOKFONT".to_vec(),
+        dictionary! { "Length1" => font_bytes.len() as i64 },
+        font_bytes,
     ));
     let font_descriptor = document.add_object(dictionary! {
-        "Type" => "FontDescriptor", "FontName" => "BookshelfCorpusFont", "Flags" => 32,
+        "Type" => "FontDescriptor", "FontName" => "DejaVuSans", "Flags" => 32,
         "FontBBox" => vec![0.into(), (-200).into(), 1000.into(), 900.into()],
         "ItalicAngle" => 0, "Ascent" => 800, "Descent" => -200, "CapHeight" => 700,
         "StemV" => 80, "FontFile2" => embedded_font_file,
     });
     let font_id = document.add_object(dictionary! {
-        "Type" => "Font", "Subtype" => "TrueType", "BaseFont" => "BookshelfCorpusFont",
+        "Type" => "Font", "Subtype" => "TrueType", "BaseFont" => "DejaVuSans",
         "Encoding" => "WinAnsiEncoding", "FirstChar" => 32, "LastChar" => 255,
         "Widths" => vec![600.into(); 224], "FontDescriptor" => font_descriptor,
     });

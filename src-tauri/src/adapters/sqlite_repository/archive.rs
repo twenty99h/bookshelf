@@ -40,6 +40,12 @@ impl Library {
             let encrypted = archive.into_inner()?;
             encrypted.finish().map_err(crypto_io)?;
             fs::rename(&temporary, destination.as_ref())?;
+            fs::write(
+                self.data_dir.join("last-archive-exported-at"),
+                unix_timestamp(std::time::SystemTime::now())
+                    .unwrap_or_default()
+                    .to_string(),
+            )?;
             Ok(())
         })();
         if result.is_err() {

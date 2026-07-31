@@ -202,4 +202,42 @@ describe("browser workspace command seam", () => {
     });
     expect(state.experiments.find((item) => item.id === experiment.id)?.status).toBe("running");
   });
+
+  it("persists unfinished experiment fields until the intent is created", async () => {
+    const draft = {
+      id: "experiment-draft:idea-leader",
+      ideaId: "idea-leader",
+      situation: "Потеря аренды владельца",
+      action: "Восстановить журнал",
+      nextStep: "Зафиксировать наблюдение",
+    };
+    let state = await browserWorkspaceCommands.execute({ kind: "saveExperimentDraft", draft });
+    expect(state.experimentDrafts).toContainEqual(draft);
+
+    state = await browserWorkspaceCommands.execute({
+      kind: "createExperiment",
+      ideaId: draft.ideaId,
+      situation: draft.situation,
+      action: draft.action,
+      nextStep: draft.nextStep,
+    });
+    expect(state.experimentDrafts).not.toContainEqual(expect.objectContaining({ ideaId: draft.ideaId }));
+  });
+
+  it("completes the selected recall in place", async () => {
+    const before = await browserWorkspaceCommands.load();
+    const recall = before.recalls[0]!;
+    const state = await browserWorkspaceCommands.execute({
+      kind: "completeRecall",
+      recallId: recall.id,
+      answer: "Лидерство моделируется как аренда",
+      rating: "confident",
+    });
+
+    expect(state.recalls).toHaveLength(before.recalls.length);
+    expect(state.recalls.find((item) => item.id === recall.id)).toMatchObject({
+      answer: "Лидерство моделируется как аренда",
+      rating: "confident",
+    });
+  });
 });

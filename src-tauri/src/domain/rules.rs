@@ -416,7 +416,7 @@ impl LibraryState {
                 }
                 self.experiments.push(Experiment {
                     id: make_id("experiment"),
-                    idea_id,
+                    idea_id: idea_id.clone(),
                     situation,
                     action,
                     result: String::new(),
@@ -432,6 +432,20 @@ impl LibraryState {
                     occurred_at: timestamp,
                     page: None,
                 });
+                self.experiment_drafts
+                    .retain(|draft| draft.idea_id != idea_id);
+            }
+            LibraryAction::SaveExperimentDraft { draft } => {
+                find_idea(self, &draft.idea_id)?;
+                if let Some(saved) = self
+                    .experiment_drafts
+                    .iter_mut()
+                    .find(|saved| saved.id == draft.id)
+                {
+                    *saved = draft;
+                } else {
+                    self.experiment_drafts.push(draft);
+                }
             }
             LibraryAction::CompleteExperiment {
                 idea_id,
@@ -549,12 +563,11 @@ impl LibraryState {
                 }
             }
             LibraryAction::CompleteRecall {
-                idea_id,
+                recall_id,
                 answer,
                 rating,
                 next_at,
             } => {
-                let book_id = find_idea(self, &idea_id)?.book_id.clone();
                 if answer.trim().is_empty() {
                     return Err(DomainError::new(
                         "recall_invalid",
@@ -566,13 +579,18 @@ impl LibraryState {
                     RecallRating::Partial => 7,
                     RecallRating::NotRecalled => 1,
                 };
-                self.recalls.push(Recall {
-                    id: make_id("recall"),
-                    idea_id,
-                    answer,
-                    rating,
-                    next_at: next_at.unwrap_or_else(|| timestamp + suggested_days * 86_400),
-                });
+                let recall = self
+                    .recalls
+                    .iter_mut()
+                    .find(|item| item.id == recall_id)
+                    .ok_or_else(|| {
+                        DomainError::new("recall_not_found", "Восстановление не найдено")
+                    })?;
+                let idea_id = recall.idea_id.clone();
+                recall.answer = answer;
+                recall.rating = rating;
+                recall.next_at = next_at.unwrap_or_else(|| timestamp + suggested_days * 86_400);
+                let book_id = find_idea(self, &idea_id)?.book_id.clone();
                 self.milestones.push(StudyMilestone {
                     id: make_id("milestone"),
                     book_id,
