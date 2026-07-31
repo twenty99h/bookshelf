@@ -5,7 +5,7 @@ import { activeLibraryFixture } from "../model/workspace-fixtures";
 const native = vi.hoisted(() => ({
   open: vi.fn(),
   convertFileSrc: vi.fn(),
-  importPdf: vi.fn(),
+  importPdfFromDialog: vi.fn(),
   bookFilePath: vi.fn(),
   loadLibrary: vi.fn(),
   executeLibraryAction: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: native.open, save: vi.fn() }
 vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: native.convertFileSrc }));
 vi.mock("@/shared/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/shared/api")>()),
-  importPdf: native.importPdf,
+  importPdfFromDialog: native.importPdfFromDialog,
   bookFilePath: native.bookFilePath,
   loadLibrary: native.loadLibrary,
   executeLibraryAction: native.executeLibraryAction,
@@ -31,8 +31,7 @@ describe("native workspace command seam", () => {
     const restored = activeLibraryFixture();
     const restoredBook = restored.books.find((book) => book.id === "book-distributed")!;
     restoredBook.reading = { page: 2, zoom: 1.35, scroll: 0.64 };
-    native.open.mockResolvedValue("C:\\Books\\distributed.pdf");
-    native.importPdf.mockResolvedValue({ state: restored, bookId: "book-distributed", duplicate: false });
+    native.importPdfFromDialog.mockResolvedValue({ state: restored, bookId: "book-distributed", duplicate: false });
     native.bookFilePath.mockResolvedValue("C:\\AppData\\Bookshelf\\books\\book-native.pdf");
     native.convertFileSrc.mockReturnValue("http://asset.localhost/books/book-native.pdf");
     native.executeLibraryAction.mockResolvedValue(restored);
@@ -50,8 +49,7 @@ describe("native workspace command seam", () => {
     });
     const restarted = await (await createWorkspaceCommands()).load();
 
-    expect(native.open).toHaveBeenCalledWith({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
-    expect(native.importPdf).toHaveBeenCalledWith("C:\\Books\\distributed.pdf");
+    expect(native.importPdfFromDialog).toHaveBeenCalledOnce();
     expect(native.bookFilePath).toHaveBeenCalledWith("book-distributed");
     expect(native.convertFileSrc).toHaveBeenCalledWith("C:\\AppData\\Bookshelf\\books\\book-native.pdf");
     expect(imported?.bookId).toBe("book-distributed");

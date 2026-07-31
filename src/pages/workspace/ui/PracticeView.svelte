@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onMount } from "svelte";
   import { Check } from "@lucide/svelte";
   import { Button, SelectField, TextArea, TextField } from "@/shared/ui";
   import type { ExperimentStatus, LibraryState, RecallRating } from "@/shared/api";
@@ -61,17 +61,18 @@
   let newExperimentAction = $state("");
   let newExperimentNextStep = $state("");
   let draftHydrated = $state(false);
-  let draftSaveTimer: number | null = null;
 
   const visibleIdeaIds = $derived(
     new Set(library.ideas.filter((idea) => !bookFilterId || idea.bookId === bookFilterId).map((idea) => idea.id)),
   );
-  const recall = $derived(
-    library.recalls
-      .filter((item) => visibleIdeaIds.has(item.ideaId) && item.nextAt <= Math.floor(Date.now() / 1_000))
-      .toSorted((a, b) => a.nextAt - b.nextAt)[0] ?? null,
+  const scheduledRecall = $derived(
+    library.recalls.filter((item) => visibleIdeaIds.has(item.ideaId)).toSorted((a, b) => a.nextAt - b.nextAt)[0] ??
+      null,
   );
-  const recallIdea = $derived(library.ideas.find((idea) => idea.id === recall?.ideaId) ?? null);
+  const recall = $derived(
+    scheduledRecall && scheduledRecall.nextAt <= Math.floor(Date.now() / 1_000) ? scheduledRecall : null,
+  );
+  const recallIdea = $derived(library.ideas.find((idea) => idea.id === scheduledRecall?.ideaId) ?? null);
   const currentExperiment = $derived(library.experiments.find((item) => item.id === selectedExperimentId) ?? null);
   const experimentIdeas = $derived(
     library.ideas.filter((idea) => visibleIdeaIds.has(idea.id) && idea.assignments.includes("experiment")),
@@ -87,26 +88,29 @@
     draftHydrated = true;
   });
 
-  onDestroy(() => {
-    if (draftSaveTimer) window.clearTimeout(draftSaveTimer);
-  });
-
-  function scheduleExperimentDraftSave() {
-    const draft = {
+  function currentExperimentDraft() {
+    return {
       id: `experiment-draft:${newExperimentIdeaId}`,
       ideaId: newExperimentIdeaId,
       situation: newExperimentSituation,
       action: newExperimentAction,
       nextStep: newExperimentNextStep,
     };
+  }
+
+  async function persistExperimentDraft() {
+    const draft = currentExperimentDraft();
     if (
       !draftHydrated ||
       !draft.ideaId ||
       ![draft.situation, draft.action, draft.nextStep].some((value) => value.trim())
     )
       return;
-    if (draftSaveTimer) window.clearTimeout(draftSaveTimer);
-    draftSaveTimer = window.setTimeout(() => void onSaveExperimentDraft(draft), 250);
+    await onSaveExperimentDraft(draft);
+  }
+
+  function scheduleExperimentDraftSave() {
+    void persistExperimentDraft();
   }
 
   function restoreExperimentDraft(ideaId: string) {
@@ -157,7 +161,7 @@
   async function startRecallNow() {
     recallRevealed = false;
     recallAnswer = "";
-    if (recall) await onStartRecallNow(recall.id);
+    if (scheduledRecall) await onStartRecallNow(scheduledRecall.id);
   }
 
   function bookTitleForIdea(ideaId: string) {
@@ -186,47 +190,59 @@
   <div class="grid grid-cols-[minmax(0,.85fr)_minmax(420px,1.15fr)] gap-6 max-[1280px]:grid-cols-1">
     <section class="rounded-xl border border-white/8 bg-slate p-7">
       <p class="font-mono text-xs uppercase tracking-[.14em] text-iris">Восстановление знания</p>
-      <h2 class="mt-3 text-2xl font-semibold">
-        В какой ситуации применима идея из раздела «{recallIdea?.section ?? "книги"}»?
-      </h2>
-      <p class="mt-3 leading-7 text-mist-dim">
-        Опишите подходящую ситуацию, объясните идею своими словами и назовите ограничения.
-      </p>
-      <div class="mt-6"><TextArea id="recall-answer" label="Мой ответ и ограничения" bind:value={recallAnswer} /></div>
-      {#if !recallRevealed}<Button
-          variant="primary"
-          disabled={!recallAnswer.trim()}
-          onclick={() => (recallRevealed = true)}>Свериться с идеей</Button
-        >{:else}<div class="mt-5 rounded-lg border border-amber/30 bg-amber/[.06] p-5">
-          <small class="font-mono uppercase text-amber">Исходная идея и источник</small>
-          <p class="mt-3 leading-7">{recallIdea?.formulation}</p>
-          {#if recallIdea?.fragments[0]}<p class="mt-3 text-sm text-mist-dim">
-              Страница {recallIdea.fragments[0].page} · {recallIdea.fragments[0].excerpt}
-            </p>{/if}
+      {#if recall}<h2 class="mt-3 text-2xl font-semibold">
+          В какой ситуации применима идея из раздела «{recallIdea?.section ?? "книги"}»?
+        </h2>
+        <p class="mt-3 leading-7 text-mist-dim">
+          Опишите подходящую ситуацию, объясните идею своими словами и назовите ограничения.
+        </p>
+        <div class="mt-6">
+          <TextArea id="recall-answer" label="Мой ответ и ограничения" bind:value={recallAnswer} />
         </div>
-        <div class="mt-5">
-          <p class="mb-3 text-sm font-semibold">Как удалось восстановить?</p>
-          <div class="flex flex-wrap gap-2">
-            <Button onclick={() => recall && onCompleteRecall(recall.id, recallAnswer, "confident")}>Уверенно</Button
-            ><Button onclick={() => recall && onCompleteRecall(recall.id, recallAnswer, "partial")}>Частично</Button
-            ><Button onclick={() => recall && onCompleteRecall(recall.id, recallAnswer, "notRecalled")}
-              >Не восстановил</Button
-            >
+        {#if !recallRevealed}<Button
+            variant="primary"
+            disabled={!recallAnswer.trim()}
+            onclick={() => (recallRevealed = true)}>Свериться с идеей</Button
+          >{:else}<div class="mt-5 rounded-lg border border-amber/30 bg-amber/[.06] p-5">
+            <small class="font-mono uppercase text-amber">Исходная идея и источник</small>
+            <p class="mt-3 leading-7">{recallIdea?.formulation}</p>
+            {#if recallIdea?.fragments[0]}<p class="mt-3 text-sm text-mist-dim">
+                Страница {recallIdea.fragments[0].page} · {recallIdea.fragments[0].excerpt}
+              </p>{/if}
           </div>
-        </div>
-        {#if relatedExperiments.length}<div class="mt-5 rounded-lg border border-white/8 p-4">
-            <b class="text-sm">Связанные результаты практики</b>
-            {#each relatedExperiments as experiment (experiment.id)}<p class="mt-2 text-sm text-mist-dim">
-                {experiment.result || "Результат ещё не записан"}
-              </p>{/each}
-          </div>{/if}{/if}
-      {#if recall}<div class="mt-6 border-t border-white/8 pt-5">
+          <div class="mt-5">
+            <p class="mb-3 text-sm font-semibold">Как удалось восстановить?</p>
+            <div class="flex flex-wrap gap-2">
+              <Button onclick={() => onCompleteRecall(recall.id, recallAnswer, "confident")}>Уверенно</Button>
+              <Button onclick={() => onCompleteRecall(recall.id, recallAnswer, "partial")}>Частично</Button>
+              <Button onclick={() => onCompleteRecall(recall.id, recallAnswer, "notRecalled")}>Не восстановил</Button>
+            </div>
+          </div>
+          {#if relatedExperiments.length}<div class="mt-5 rounded-lg border border-white/8 p-4">
+              <b class="text-sm">Связанные результаты практики</b>
+              {#each relatedExperiments as experiment (experiment.id)}<p class="mt-2 text-sm text-mist-dim">
+                  {experiment.result || "Результат ещё не записан"}
+                </p>{/each}
+            </div>{/if}{/if}
+        <div class="mt-6 border-t border-white/8 pt-5">
           <p class="text-sm text-mist-dim">Следующее восстановление: {recallDate(recall.nextAt)}.</p>
           <div class="mt-3 flex flex-wrap gap-2">
             <Button onclick={() => onRescheduleRecall(recall.id, 7)}>Перенести на 7 дней</Button>
             <Button onclick={startRecallNow}>Начать сейчас</Button>
           </div>
           <p class="mt-3 text-xs text-mist-faint">Без просрочки, календарного сеанса и записи о пропуске.</p>
+        </div>
+      {:else if scheduledRecall}<div class="mt-6 rounded-lg border border-white/8 bg-night/30 p-5">
+          <h2 class="text-xl font-semibold">Пока ничего не нужно восстанавливать</h2>
+          <p class="mt-3 text-sm text-mist-dim">
+            Следующая идея запланирована на {recallDate(scheduledRecall.nextAt)}. Можно начать раньше без отметки о
+            просрочке.
+          </p>
+          <Button class="mt-4" onclick={startRecallNow}>Начать сейчас</Button>
+        </div>
+      {:else}<div class="mt-6 rounded-lg border border-white/8 bg-night/30 p-5">
+          <h2 class="text-xl font-semibold">Нет запланированных восстановлений</h2>
+          <p class="mt-3 text-sm text-mist-dim">Назначьте идее работу «Восстановление», когда она будет готова.</p>
         </div>{/if}
     </section>
 

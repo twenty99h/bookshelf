@@ -8,8 +8,6 @@
   let {
     library,
     backupMetadata,
-    readerMode = $bindable(),
-    readerImages = $bindable(),
     onRestoreBackup,
     onExportArchive,
     onImportArchive,
@@ -19,14 +17,12 @@
   }: {
     library: LibraryState;
     backupMetadata: BackupMetadata;
-    readerMode: string;
-    readerImages: boolean;
     onRestoreBackup: () => Promise<string>;
     onExportArchive: (password: string) => Promise<string>;
     onImportArchive: (password: string) => Promise<string>;
     onExportDiagnostics: () => Promise<string>;
     onCheckForUpdate: () => Promise<string>;
-    onPersistPreferences: () => Promise<void>;
+    onPersistPreferences: (preferences: { mode: "muted" | "original" | "dark"; images: boolean }) => Promise<void>;
   } = $props();
 
   let backupPassword = $state("");
@@ -34,6 +30,19 @@
   let section = $state<SettingsSection>("interface");
   let updateStatus = $state("");
   let diagnosticStatus = $state("");
+  function initialPreferenceBook() {
+    return library.books.find((book) => book.id === library.activeStudyBookId) ?? library.books[0] ?? null;
+  }
+
+  const preferenceBook = initialPreferenceBook();
+  let readerMode = $state<"muted" | "original" | "dark">(
+    preferenceBook?.reader.documentMode === "darkInverted"
+      ? "dark"
+      : preferenceBook?.reader.documentMode === "original"
+        ? "original"
+        : "muted",
+  );
+  let readerImages = $state(preferenceBook?.reader.invertImages ?? true);
   const snapshotAt = $derived(backupMetadata.snapshotAt);
   const lastArchiveAt = $derived(backupMetadata.archiveAt);
   const changesSinceArchive = $derived(
@@ -103,14 +112,14 @@
               { value: "dark", label: "Тёмный инвертированный" },
             ]}
             onValueChange={(value) => {
-              readerMode = value;
-              void onPersistPreferences();
+              readerMode = value as typeof readerMode;
+              void onPersistPreferences({ mode: readerMode, images: readerImages });
             }}
           /><CheckboxField
             id="invert-images"
             label="Инвертировать изображения в тёмном режиме"
             bind:checked={readerImages}
-            onCheckedChange={() => void onPersistPreferences()}
+            onCheckedChange={() => void onPersistPreferences({ mode: readerMode, images: readerImages })}
           />
         </div>
       </section>

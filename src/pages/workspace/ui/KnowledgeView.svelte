@@ -133,10 +133,10 @@
       {@attach focusCompactDrawer}
       tabindex="-1"
       aria-labelledby="knowledge-detail-title"
-      class="knowledge-detail overflow-auto p-8 outline-none"
+      class="overflow-auto p-8 outline-none max-[1281px]:fixed max-[1281px]:inset-y-4 max-[1281px]:right-4 max-[1281px]:z-30 max-[1281px]:w-[min(720px,calc(100vw-2rem))] max-[1281px]:rounded-xl max-[1281px]:border max-[1281px]:border-white/10 max-[1281px]:bg-slate max-[1281px]:shadow-2xl"
     >
       <button
-        class="knowledge-drawer-close ml-auto hidden size-10 place-items-center rounded-md border border-white/10"
+        class="ml-auto hidden size-10 place-items-center rounded-md border border-white/10 max-[1281px]:grid"
         aria-label="Закрыть идею"
         onclick={() => (detailOpen = false)}><X class="size-4" /></button
       >
@@ -273,23 +273,3 @@
       {codexResult}
     </p>{/if}
 </DialogModal>
-
-<style>
-  @media (max-width: 1280px) {
-    .knowledge-detail {
-      position: fixed;
-      inset-block: 1rem;
-      right: 1rem;
-      z-index: 30;
-      width: min(720px, calc(100vw - 2rem));
-      border: 1px solid rgb(255 255 255 / 0.1);
-      border-radius: 0.75rem;
-      background: var(--color-slate);
-      box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.5);
-    }
-
-    .knowledge-drawer-close {
-      display: grid;
-    }
-  }
-</style>

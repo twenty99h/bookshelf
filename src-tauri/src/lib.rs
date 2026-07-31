@@ -4,9 +4,24 @@ mod domain;
 mod ipc;
 
 use crate::adapters::sqlite_repository::Library;
-use crate::ipc::AppState;
+use crate::ipc::{AppState, PdfPicker};
 use std::{collections::HashMap, sync::Mutex};
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
+
+struct SystemPdfPicker(tauri::AppHandle);
+
+impl PdfPicker for SystemPdfPicker {
+    fn pick_pdf(&self) -> Option<std::path::PathBuf> {
+        self.0
+            .dialog()
+            .file()
+            .add_filter("PDF", &["pdf"])
+            .blocking_pick_file()?
+            .into_path()
+            .ok()
+    }
+}
 
 pub fn run() {
     tauri::Builder::default()
@@ -18,6 +33,7 @@ pub fn run() {
             app.manage(AppState {
                 library: Mutex::new(library),
                 codex_cancellations: Mutex::new(HashMap::new()),
+                pdf_picker: Box::new(SystemPdfPicker(app.handle().clone())),
             });
             Ok(())
         })
@@ -26,6 +42,7 @@ pub fn run() {
             ipc::execute_library_action,
             ipc::delete_book,
             ipc::import_pdf,
+            ipc::import_pdf_from_dialog,
             ipc::search_library,
             ipc::book_file_path,
             ipc::export_library_archive,
@@ -50,6 +67,25 @@ mod native_smoke {
     use super::*;
     use serde_json::{json, Value};
     use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
+
+    trait PdfSelection {
+        fn select_pdf(&self) -> std::path::PathBuf;
+    }
+
+    struct FixturePdfSelection;
+
+    impl PdfSelection for FixturePdfSelection {
+        fn select_pdf(&self) -> std::path::PathBuf {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/pdf/text-layer.pdf")
+        }
+    }
+
+    impl PdfPicker for FixturePdfSelection {
+        fn pick_pdf(&self) -> Option<std::path::PathBuf> {
+            Some(PdfSelection::select_pdf(self))
+        }
+    }
 
     fn invoke(
         webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
@@ -78,9 +114,12 @@ mod native_smoke {
             .manage(AppState {
                 library: Mutex::new(Library::open(data_dir).unwrap()),
                 codex_cancellations: Mutex::new(HashMap::new()),
+                pdf_picker: Box::new(FixturePdfSelection),
             })
             .invoke_handler(tauri::generate_handler![
+                ipc::load_library,
                 ipc::import_pdf,
+                ipc::import_pdf_from_dialog,
                 ipc::book_file_path,
                 ipc::execute_library_action,
             ])
@@ -89,22 +128,22 @@ mod native_smoke {
     }
 
     #[test]
-    fn ipc_import_local_path_reader_position_and_restart_are_one_native_chain() {
+    fn selected_pdf_ipc_local_url_reader_route_position_and_restart_are_one_native_chain() {
         let data_dir = tempfile::tempdir().unwrap();
-        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/pdf/text-layer.pdf");
         let native_app = app(data_dir.path());
         let webview = tauri::WebviewWindowBuilder::new(&native_app, "main", Default::default())
             .build()
             .unwrap();
-        let imported = invoke(
-            &webview,
-            "import_pdf",
-            json!({ "path": source, "title": "Native smoke" }),
-        );
+        let imported = invoke(&webview, "import_pdf_from_dialog", json!({}));
         let book_id = imported["bookId"].as_str().unwrap();
         let local_path = invoke(&webview, "book_file_path", json!({ "bookId": book_id }));
-        assert!(std::path::Path::new(local_path.as_str().unwrap()).is_file());
+        let local_path = std::path::Path::new(local_path.as_str().unwrap());
+        assert!(local_path.is_file());
+        let local_url = tauri::Url::from_file_path(local_path).unwrap();
+        assert_eq!(local_url.scheme(), "file");
+        let reader_url = tauri::Url::parse(&format!("tauri://localhost/reader/{book_id}")).unwrap();
+        webview.navigate(reader_url.clone()).unwrap();
+        assert_eq!(webview.url().unwrap(), reader_url);
         invoke(
             &webview,
             "execute_library_action",
@@ -113,8 +152,13 @@ mod native_smoke {
         drop(webview);
         drop(native_app);
 
-        let restored = Library::open(data_dir.path()).unwrap().load().unwrap();
-        assert_eq!(restored.books[0].reading.page, 2);
-        assert_eq!(restored.books[0].reading.zoom, 1.35);
+        let restarted_app = app(data_dir.path());
+        let restarted_webview =
+            tauri::WebviewWindowBuilder::new(&restarted_app, "main", Default::default())
+                .build()
+                .unwrap();
+        let restored = invoke(&restarted_webview, "load_library", json!({}));
+        assert_eq!(restored["books"][0]["reading"]["page"], 2);
+        assert_eq!(restored["books"][0]["reading"]["zoom"], 1.35);
     }
 }

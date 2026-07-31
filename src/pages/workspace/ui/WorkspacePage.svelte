@@ -52,9 +52,6 @@
   let diagnosticEntries = $state<string[]>([]);
   let backupMetadata = $state<BackupMetadata>({ snapshotAt: null, archiveAt: null });
 
-  let readerMode = $state<"muted" | "original" | "dark">("muted");
-  let readerImages = $state(true);
-
   const activeBook = $derived(library?.books.find((book) => book.id === library?.activeStudyBookId) ?? null);
   const selectedBook = $derived(
     library?.books.find((book) => book.id === resourceId) ?? activeBook ?? library?.books[0] ?? null,
@@ -105,15 +102,6 @@
       selectedDraftId = query.get("draft") ?? "";
       selectedTopic = query.get("topic") ?? "all";
       bookFilterId = query.get("book") ?? "";
-      if (selectedBook) {
-        readerMode =
-          selectedBook.reader.documentMode === "mutedLight"
-            ? "muted"
-            : selectedBook.reader.documentMode === "darkInverted"
-              ? "dark"
-              : "original";
-        readerImages = selectedBook.reader.invertImages;
-      }
     } catch (cause) {
       session.error = commandErrorMessage(cause);
       recordDiagnostic("library-load", session.error);
@@ -145,15 +133,16 @@
     }
   }
 
-  async function persistReaderPreferences() {
+  async function persistReaderPreferences(preferences: { mode: "muted" | "original" | "dark"; images: boolean }) {
     if (!selectedBook || !commands) return;
     await executeLibraryAction(
       {
         kind: "updateReaderPreferences",
         bookId: selectedBook.id,
         preferences: {
-          documentMode: readerMode === "muted" ? "mutedLight" : readerMode === "dark" ? "darkInverted" : "original",
-          invertImages: readerImages,
+          documentMode:
+            preferences.mode === "muted" ? "mutedLight" : preferences.mode === "dark" ? "darkInverted" : "original",
+          invertImages: preferences.images,
           sidebarOpen: selectedBook.reader.sidebarOpen,
           sidebarTab: selectedBook.reader.sidebarTab,
           sidebarWidth: selectedBook.reader.sidebarWidth,
@@ -571,8 +560,6 @@
       {:else if context === "settings"}<SettingsView
           {library}
           {backupMetadata}
-          bind:readerMode
-          bind:readerImages
           onRestoreBackup={restoreBackup}
           onExportArchive={exportArchive}
           onImportArchive={importArchive}

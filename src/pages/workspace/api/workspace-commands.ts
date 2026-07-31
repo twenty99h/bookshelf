@@ -7,7 +7,7 @@ import {
   exportDiagnosticLog,
   exportLibraryArchive,
   executeLibraryAction,
-  importPdf,
+  importPdfFromDialog,
   importLibraryArchive,
   installSignedUpdate,
   loadBackupMetadata,
@@ -46,10 +46,7 @@ const desktopCommands: WorkspaceCommands = {
   load: loadLibrary,
   execute: executeLibraryAction,
   search: searchLibrary,
-  async importPdf() {
-    const path = await open({ multiple: false, filters: [{ name: "PDF", extensions: ["pdf"] }] });
-    return path ? importPdf(path) : null;
-  },
+  importPdf: importPdfFromDialog,
   async bookUrl(bookId) {
     return convertFileSrc(await bookFilePath(bookId));
   },

@@ -181,6 +181,9 @@ test("browser scenarios expose deterministic loading and recoverable library err
 test("practice supports recall timing and the complete experiment lifecycle", async ({ page }) => {
   await new AppPage(page).open("/practice");
   await page.getByRole("button", { name: "Перенести на 7 дней" }).click();
+  await expect(page.getByRole("heading", { name: "Пока ничего не нужно восстанавливать" })).toBeVisible();
+  await page.getByRole("button", { name: "Начать сейчас" }).click();
+  await expect(page.getByLabel("Мой ответ и ограничения")).toBeVisible();
   await page.getByLabel("Ситуация нового замысла").fill("Проверка модели на новом сервисе");
   await page.getByLabel("Проверяемое действие").fill("Сделать переход владельца явным");
   await page.getByLabel("Следующий шаг нового замысла").fill("Обсудить результат без дедлайна");
@@ -202,15 +205,6 @@ test("unfinished experiment fields survive leaving and reopening Practice", asyn
   await new AppPage(page).open("/practice");
   await page.getByLabel("Ситуация нового замысла").fill("Потеря аренды владельца журнала");
   await page.getByLabel("Проверяемое действие").fill("Восстановить журнал из подтверждённой позиции");
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (window.__BOOKSHELF_TEST__?.commands ?? []).some(
-          (command) => (command as { kind?: string }).kind === "saveExperimentDraft",
-        ),
-      ),
-    )
-    .toBe(true);
   await page.goto("/library");
   await page.goto("/practice");
   await expect(page.getByLabel("Ситуация нового замысла")).toHaveValue("Потеря аренды владельца журнала");
@@ -362,7 +356,7 @@ test.describe("compact desktop boundary", () => {
   test("knowledge detail is an accessible drawer at exactly 1280 pixels", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await new AppPage(page).open("/knowledge/idea-leader");
-    const drawer = page.locator(".knowledge-detail");
+    const drawer = page.getByRole("article", { name: /Единый лидер делает порядок записей понятным/ });
     await expect(drawer).toBeVisible();
     await page.getByRole("button", { name: "Закрыть идею" }).click();
     await expect(drawer).not.toBeVisible();

@@ -16,9 +16,14 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 use ts_rs::TS;
 
+pub(crate) trait PdfPicker: Send + Sync {
+    fn pick_pdf(&self) -> Option<std::path::PathBuf>;
+}
+
 pub(crate) struct AppState {
     pub(crate) library: Mutex<Library>,
     pub(crate) codex_cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub(crate) pdf_picker: Box<dyn PdfPicker>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, TS)]
@@ -95,7 +100,6 @@ impl CommandError {
 
 #[tauri::command]
 pub(crate) fn load_library(
-    _app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<LibraryState, CommandError> {
     let library = state
@@ -158,6 +162,16 @@ pub(crate) fn import_pdf(
         title,
     )
     .map_err(|error| CommandError::from_application(error, "импортировать PDF"))
+}
+
+#[tauri::command]
+pub(crate) fn import_pdf_from_dialog(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<ImportPdfResult>, CommandError> {
+    let Some(path) = state.pdf_picker.pick_pdf() else {
+        return Ok(None);
+    };
+    import_pdf(path.to_string_lossy().into_owned(), String::new(), state).map(Some)
 }
 
 #[tauri::command]

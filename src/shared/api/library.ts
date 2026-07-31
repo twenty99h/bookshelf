@@ -82,6 +82,9 @@ export async function deleteBook(bookId: string): Promise<LibraryState> {
 export async function importPdf(path: string, title = ""): Promise<ImportPdfResult> {
   return invoke<ImportPdfResult>("import_pdf", { path, title });
 }
+export async function importPdfFromDialog(): Promise<ImportPdfResult | null> {
+  return invoke<ImportPdfResult | null>("import_pdf_from_dialog");
+}
 export async function searchLibrary(query: string): Promise<SearchResult[]> {
   return invoke<SearchResult[]>("search_library", { query });
 }

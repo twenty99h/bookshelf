@@ -9,6 +9,7 @@ export {
   loadBackupMetadata,
   exportMaterialMarkdown,
   importPdf,
+  importPdfFromDialog,
   importLibraryArchive,
   installSignedUpdate,
   loadLibrary,
