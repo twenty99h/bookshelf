@@ -31,6 +31,15 @@ struct ArchiveManifest {
     state: LibraryState,
 }
 
+const WORKSPACE_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceEnvelope {
+    schema_version: u32,
+    state: LibraryState,
+}
+
 impl Library {
     pub(crate) fn reading_storage(&self) -> ReadingStorage<'_> {
         ReadingStorage(self)
@@ -66,7 +75,7 @@ impl Library {
             })
             .optional()
             .map_err(sqlite_io)?;
-        json.map(|value| serde_json::from_str(&value).map_err(io::Error::other))
+        json.map(|value| decode_workspace(&value))
             .unwrap_or_else(|| Ok(LibraryState::default()))
     }
 
@@ -208,7 +217,11 @@ impl Library {
     fn replace_state(&self, state: &LibraryState) -> io::Result<()> {
         let mut connection = Connection::open(&self.database_file).map_err(sqlite_io)?;
         let transaction = connection.transaction().map_err(sqlite_io)?;
-        transaction.execute("INSERT INTO workspace_state (id, json) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET json = excluded.json", [serde_json::to_string(state).map_err(io::Error::other)?]).map_err(sqlite_io)?;
+        let envelope = WorkspaceEnvelope {
+            schema_version: WORKSPACE_SCHEMA_VERSION,
+            state: state.clone(),
+        };
+        transaction.execute("INSERT INTO workspace_state (id, json) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET json = excluded.json", [serde_json::to_string(&envelope).map_err(io::Error::other)?]).map_err(sqlite_io)?;
         transaction
             .execute("DELETE FROM search_index", [])
             .map_err(sqlite_io)?;
@@ -267,7 +280,7 @@ impl Library {
     }
 
     fn migrate(&self) -> io::Result<()> {
-        let connection = Connection::open(&self.database_file).map_err(sqlite_io)?;
+        let mut connection = Connection::open(&self.database_file).map_err(sqlite_io)?;
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS workspace_state (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(entity_id UNINDEXED, kind UNINDEXED, title, context, tokenize='unicode61'); INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);").map_err(sqlite_io)?;
         let legacy = self.data_dir.join("library.json");
         let has_state: bool = connection
@@ -278,14 +291,114 @@ impl Library {
             )
             .map_err(sqlite_io)?;
         if !has_state && legacy.exists() {
-            let state: LibraryState =
-                serde_json::from_slice(&fs::read(&legacy)?).map_err(io::Error::other)?;
+            let raw = String::from_utf8(fs::read(&legacy)?).map_err(io::Error::other)?;
+            let state = decode_legacy_workspace(&raw)?;
             drop(connection);
             self.replace_state(&state)?;
             fs::rename(&legacy, legacy.with_extension("json.migrated"))?;
+        } else if has_state {
+            let raw: String = connection
+                .query_row("SELECT json FROM workspace_state WHERE id = 1", [], |row| {
+                    row.get(0)
+                })
+                .map_err(sqlite_io)?;
+            if decode_workspace(&raw).is_err() {
+                let state = decode_legacy_workspace(&raw)?;
+                let transaction = connection.transaction().map_err(sqlite_io)?;
+                let envelope = WorkspaceEnvelope {
+                    schema_version: WORKSPACE_SCHEMA_VERSION,
+                    state,
+                };
+                transaction
+                    .execute(
+                        "UPDATE workspace_state SET json = ?1 WHERE id = 1",
+                        [serde_json::to_string(&envelope).map_err(io::Error::other)?],
+                    )
+                    .map_err(sqlite_io)?;
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)",
+                        [],
+                    )
+                    .map_err(sqlite_io)?;
+                transaction.commit().map_err(sqlite_io)?;
+            }
         }
         Ok(())
     }
+}
+
+fn decode_workspace(raw: &str) -> io::Result<LibraryState> {
+    let value: serde_json::Value = serde_json::from_str(raw).map_err(io::Error::other)?;
+    let schema_version = value
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64);
+    if schema_version != Some(u64::from(WORKSPACE_SCHEMA_VERSION)) {
+        return Err(io::Error::other(
+            "Неподдерживаемая версия состояния личной библиотеки",
+        ));
+    }
+    let state = value
+        .get("state")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| io::Error::other("Состояние личной библиотеки повреждено"))?;
+    for required in [
+        "books",
+        "drafts",
+        "ideas",
+        "experiments",
+        "milestones",
+        "completionDrafts",
+    ] {
+        if !state.contains_key(required) {
+            return Err(io::Error::other(format!(
+                "Состояние личной библиотеки частично преобразовано: нет {required}"
+            )));
+        }
+    }
+    for book in state
+        .get("books")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let book = book
+            .as_object()
+            .ok_or_else(|| io::Error::other("Запись книги повреждена"))?;
+        for required in [
+            "contentHash",
+            "pageCount",
+            "farthestPage",
+            "reader",
+            "studyStatus",
+            "studyCycles",
+            "archived",
+        ] {
+            if !book.contains_key(required) {
+                return Err(io::Error::other(format!(
+                    "Книга частично преобразована: нет {required}"
+                )));
+            }
+        }
+    }
+    let envelope: WorkspaceEnvelope = serde_json::from_value(value).map_err(io::Error::other)?;
+    Ok(envelope.state)
+}
+
+fn decode_legacy_workspace(raw: &str) -> io::Result<LibraryState> {
+    let value: serde_json::Value = serde_json::from_str(raw).map_err(io::Error::other)?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| io::Error::other("Старое состояние личной библиотеки повреждено"))?;
+    let is_complete_legacy = ["sessions", "weeklySessionBudget", "lastDebtChange"]
+        .iter()
+        .all(|field| object.contains_key(*field));
+    if !is_complete_legacy {
+        return Err(io::Error::other(
+            "Состояние личной библиотеки частично преобразовано; исходный файл оставлен без изменений",
+        ));
+    }
+    serde_json::from_value(value).map_err(io::Error::other)
 }
 
 impl LibraryRepository for Library {

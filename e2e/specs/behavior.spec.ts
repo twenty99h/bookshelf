@@ -11,8 +11,65 @@ test("reader saves a draft through the domain command seam", async ({ page }) =>
 
   const commands = await page.evaluate(() => window.__BOOKSHELF_TEST__?.commands ?? []);
   expect(commands).toContainEqual(
-    expect.objectContaining({ kind: "captureDraft", bookId: "book-distributed", page: 286 }),
+    expect.objectContaining({ kind: "captureDraft", bookId: "book-distributed", page: 10 }),
   );
+});
+
+test("reader formulates an idea without assigning learning work automatically", async ({ page }) => {
+  const reader = new ReaderPage(page);
+  await reader.open();
+  await reader.openSidebar("Заметка");
+  await page.getByLabel("Фрагмент книги").fill("A timeout cannot prove whether a remote write succeeded.");
+  await page.getByRole("button", { name: "Оформить как идею" }).click();
+  await page
+    .getByLabel("Моя формулировка идеи")
+    .fill("Неопределённый результат удалённой записи должен быть явным состоянием модели.");
+  await page.getByRole("button", { name: "Создать идею" }).click();
+
+  const commands = await page.evaluate(() => window.__BOOKSHELF_TEST__?.commands ?? []);
+  expect(commands).toContainEqual(expect.objectContaining({ kind: "resolveDraftAsIdea", assignments: [] }));
+  await new AppPage(page).open("/knowledge");
+  await expect(
+    page.getByRole("article").getByRole("heading", {
+      name: "Неопределённый результат удалённой записи должен быть явным состоянием модели.",
+    }),
+  ).toBeVisible();
+});
+
+test("real PDF text selection preserves an addressable source", async ({ page }) => {
+  const reader = new ReaderPage(page);
+  await reader.open();
+  await expect(page.getByTestId("continuous-pdf")).toBeVisible();
+  const textSpan = page.locator(".textLayer span").first();
+  await expect(textSpan).toBeVisible();
+  await textSpan.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await expect(page.getByRole("heading", { name: "Черновая заметка" })).toBeVisible();
+  await page.getByRole("button", { name: /В черновики/ }).click();
+
+  const commands = await page.evaluate(() => window.__BOOKSHELF_TEST__?.commands ?? []);
+  expect(commands).toContainEqual(expect.objectContaining({ kind: "captureDraftSources", bookId: "book-distributed" }));
+});
+
+test("activating another book pauses the previous active study", async ({ page }) => {
+  await new AppPage(page).open("/library/book-domain");
+  await page.getByRole("button", { name: "Сделать активной" }).click();
+  await new AppPage(page).open("/");
+  await expect(page.getByRole("heading", { name: "Domain-Driven Design" })).toBeVisible();
+});
+
+test("draft resolution creates an addressable idea with its source", async ({ page }) => {
+  await new AppPage(page).open("/drafts");
+  await page.getByLabel("Моя формулировка").fill("Лидерство — это переход доменного риска, а не постоянная роль.");
+  await page.getByRole("button", { name: "Создать идею" }).click();
+  await new AppPage(page).open("/knowledge");
+  await expect(page.getByText("Лидерство — это переход доменного риска, а не постоянная роль.").first()).toBeVisible();
 });
 
 test("reader restores position and layout after reload", async ({ page }) => {

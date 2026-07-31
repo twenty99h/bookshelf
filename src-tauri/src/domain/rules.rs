@@ -175,13 +175,10 @@ impl LibraryState {
                 section,
                 assignments,
             } => {
-                if formulation.trim().is_empty()
-                    || section.trim().is_empty()
-                    || assignments.is_empty()
-                {
+                if formulation.trim().is_empty() || section.trim().is_empty() {
                     return Err(DomainError::new(
                         "idea_fields_required",
-                        "Нужны авторская формулировка, раздел и хотя бы одно назначение",
+                        "Нужны авторская формулировка и раздел",
                     ));
                 }
                 let draft = self
@@ -248,6 +245,17 @@ impl LibraryState {
                 }
                 self.drafts.retain(|item| item.id != draft_id);
             }
+            LibraryAction::DeferDraft { draft_id } => {
+                let index = self
+                    .drafts
+                    .iter()
+                    .position(|item| item.id == draft_id)
+                    .ok_or_else(|| {
+                        DomainError::new("draft_not_found", "Черновая заметка не найдена")
+                    })?;
+                let draft = self.drafts.remove(index);
+                self.drafts.push(draft);
+            }
             LibraryAction::DiscardDraft { draft_id } => {
                 if !self.drafts.iter().any(|item| item.id == draft_id) {
                     return Err(DomainError::new(
@@ -286,31 +294,31 @@ impl LibraryState {
                 book.study_status = StudyStatus::ReadyToComplete;
             }
             LibraryAction::ArchiveBook { book_id } => {
+                let was_active = self.active_study_book_id.as_deref() == Some(book_id.as_str());
                 let book = find_book_mut(self, &book_id)?;
                 book.archived = true;
-                book.study_status = StudyStatus::Archived;
-                if self.active_study_book_id.as_deref() == Some(book_id.as_str()) {
+                if was_active {
+                    book.study_status = StudyStatus::Paused;
                     self.active_study_book_id = None;
                 }
             }
             LibraryAction::RestoreBook { book_id } => {
                 let book = find_book_mut(self, &book_id)?;
                 book.archived = false;
-                book.study_status = if book.study_completed {
-                    StudyStatus::Completed
-                } else {
-                    StudyStatus::Paused
-                };
             }
             LibraryAction::StartRepeatStudy { book_id } => {
-                let book = find_book_mut(self, &book_id)?;
-                if !book.study_completed {
+                if find_book(self, &book_id)?.study_status != StudyStatus::Completed {
                     return Err(DomainError::new(
                         "repeat_study_requires_completion",
                         "Повторное изучение доступно после завершённого цикла",
                     ));
                 }
-                book.study_completed = false;
+                if let Some(active_id) = self.active_study_book_id.clone() {
+                    if active_id != book_id {
+                        find_book_mut(self, &active_id)?.study_status = StudyStatus::Paused;
+                    }
+                }
+                let book = find_book_mut(self, &book_id)?;
                 book.reading_completed = false;
                 book.study_status = StudyStatus::Repeating;
                 book.study_cycles.push(StudyCycle {
@@ -416,7 +424,6 @@ impl LibraryState {
                 action,
                 result,
                 conclusion,
-                successful,
             } => {
                 let book_id = find_idea(self, &idea_id)?.book_id.clone();
                 if [
@@ -440,8 +447,6 @@ impl LibraryState {
                     action,
                     result,
                     conclusion,
-                    successful,
-                    completed: true,
                     status: ExperimentStatus::Completed,
                     cancellation_reason: String::new(),
                     next_step: String::new(),
@@ -500,10 +505,6 @@ impl LibraryState {
                     experiment.conclusion = conclusion;
                     experiment.cancellation_reason = cancellation_reason;
                     experiment.next_step = next_step;
-                    experiment.completed = matches!(
-                        status,
-                        ExperimentStatus::Completed | ExperimentStatus::Cancelled
-                    );
                     experiment.idea_id.clone()
                 };
                 let book_id = find_idea(self, &idea_id)?.book_id.clone();
@@ -698,7 +699,6 @@ impl LibraryState {
                     ));
                 }
                 let book = find_book_mut(self, &book_id)?;
-                book.study_completed = true;
                 book.study_status = StudyStatus::Completed;
                 let completed_retrospective = Retrospective {
                     text: retrospective,

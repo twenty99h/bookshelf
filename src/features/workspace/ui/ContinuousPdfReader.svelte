@@ -15,6 +15,10 @@
     onPosition,
     onSelection,
     onOutline,
+    searchQuery,
+    onSearchResults,
+    sources,
+    onSourceSelect,
   }: {
     url: string;
     initialPage: number;
@@ -25,6 +29,10 @@
     onPosition: (page: number, scroll: number) => void;
     onSelection: (fragments: SourceFragment[]) => void;
     onOutline: (outline: OutlineItem[]) => void;
+    searchQuery: string;
+    onSearchResults: (results: { page: number; excerpt: string }[]) => void;
+    sources: SourceFragment[];
+    onSourceSelect: (source: SourceFragment) => void;
   } = $props();
 
   let loadingTask: PDFDocumentLoadingTask | null = null;
@@ -34,7 +42,8 @@
   let error = $state("");
   let container: HTMLDivElement | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  const estimatedPageHeight = $derived(830 * zoom + 20);
+  let searchGeneration = 0;
+  const estimatedPageHeight = $derived(842 * zoom + 20);
   const firstPage = $derived(Math.max(1, currentPage - 2));
   const lastPage = $derived(Math.min(pageCount, currentPage + 2));
   const visiblePages = $derived(
@@ -59,6 +68,20 @@
     };
   });
 
+  function searchAttachment() {
+    const query = searchQuery.trim();
+    const pdf = pdfDocument;
+    const generation = ++searchGeneration;
+    if (!query || !pdf) {
+      queueMicrotask(() => onSearchResults([]));
+    } else {
+      void searchDocument(pdf, query, generation);
+    }
+    return () => {
+      if (generation === searchGeneration) searchGeneration += 1;
+    };
+  }
+
   async function initialize() {
     try {
       const pdfjs = await import("pdfjs-dist");
@@ -71,9 +94,11 @@
       });
       pdfDocument = await loadingTask.promise;
       pageCount = pdfDocument.numPages;
+      currentPage = Math.min(pageCount, Math.max(1, initialPage));
       onOutline(await readOutline(pdfDocument));
+      onPosition(currentPage, initialScroll);
       requestAnimationFrame(() => {
-        if (container) container.scrollTop = (initialPage - 1 + initialScroll) * estimatedPageHeight;
+        if (container) container.scrollTop = (currentPage - 1 + initialScroll) * estimatedPageHeight;
       });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -95,6 +120,25 @@
       }
     }
     return result;
+  }
+
+  async function searchDocument(pdf: PDFDocumentProxy, query: string, generation: number) {
+    const needle = query.toLocaleLowerCase("ru");
+    const results: { page: number; excerpt: string }[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ")
+        .replace(/\s+/g, " ");
+      const index = text.toLocaleLowerCase("ru").indexOf(needle);
+      if (index >= 0)
+        results.push({ page: pageNumber, excerpt: text.slice(Math.max(0, index - 70), index + query.length + 120) });
+      if (generation !== searchGeneration) return;
+      if (results.length >= 50) break;
+    }
+    if (generation === searchGeneration) onSearchResults(results);
   }
 
   function handleScroll() {
@@ -120,8 +164,9 @@
       return;
     const excerpt = selection.toString().trim();
     if (!excerpt) return;
+    const range = selection.getRangeAt(0);
     const fragments = [...container.querySelectorAll<HTMLElement>("[data-pdf-page]")]
-      .filter((page) => selection.containsNode(page, true))
+      .filter((page) => range.intersectsNode(page))
       .map((page) => ({
         page: Number(page.dataset.pdfPage),
         excerpt,
@@ -134,6 +179,7 @@
 <div
   class="h-full overflow-y-auto bg-[#15191f] px-12 py-8 max-[1280px]:px-6"
   {@attach rememberContainer}
+  {@attach searchAttachment}
   onscroll={handleScroll}
   data-testid="continuous-pdf"
 >
@@ -142,7 +188,15 @@
       <p class="mt-2 text-sm text-mist-dim">{error}</p>
     </div>{:else if pdfDocument}<div style:height={`${(firstPage - 1) * estimatedPageHeight}px`}></div>
     <div class="grid gap-5">
-      {#each visiblePages as page (page)}<PdfPage document={pdfDocument} {page} {zoom} {mode} {invertImages} />{/each}
+      {#each visiblePages as page (page)}<PdfPage
+          document={pdfDocument}
+          {page}
+          {zoom}
+          {mode}
+          {invertImages}
+          sources={sources.filter((source) => source.page === page)}
+          {onSourceSelect}
+        />{/each}
     </div>
     <div style:height={`${Math.max(0, pageCount - lastPage) * estimatedPageHeight}px`}></div>{:else}<div
       class="grid min-h-[60vh] place-items-center"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
-  import "pdfjs-dist/web/pdf_viewer.css";
+  import type { SourceFragment } from "@/shared/api";
+  import "./pdf-text-layer.css";
 
   let {
     document,
@@ -8,12 +9,16 @@
     zoom,
     mode,
     invertImages,
+    sources = [],
+    onSourceSelect,
   }: {
     document: PDFDocumentProxy;
     page: number;
     zoom: number;
     mode: "muted" | "original" | "dark";
     invertImages: boolean;
+    sources?: SourceFragment[];
+    onSourceSelect: (source: SourceFragment) => void;
   } = $props();
 
   let renderTask: RenderTask | null = null;
@@ -80,14 +85,18 @@
 >
   <canvas></canvas>
   <div class="textLayer"></div>
+  {#if sources.length}<div
+      class="absolute inset-y-0 right-0 w-6 border-l border-amber/40"
+      aria-label="Цифровое поле источников"
+    >
+      {#each sources as source, index (`${source.page}-${source.excerpt}`)}<button
+          aria-label="Открыть сохранённый источник на странице {page}"
+          class="absolute right-1 grid size-4 place-items-center rounded-full border border-amber bg-[#40331f] text-[9px] text-amber outline-offset-2 focus-visible:outline-2 focus-visible:outline-amber"
+          style:top={`${18 + index * 7}%`}
+          onclick={() => onSourceSelect(source)}>{index + 1}</button
+        >{/each}
+    </div>{/if}
   {#if error}<p class="absolute inset-x-8 top-8 rounded bg-white p-4 text-sm text-danger" role="alert">
       Не удалось отобразить страницу {page}: {error}
     </p>{/if}
 </article>
-
-<style>
-  .pdf-page :global(.textLayer) {
-    position: absolute;
-    inset: 0;
-  }
-</style>

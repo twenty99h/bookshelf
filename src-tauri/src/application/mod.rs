@@ -12,6 +12,15 @@ pub(crate) struct SearchResult {
     pub(crate) context: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub(crate) struct ImportPdfResult {
+    pub(crate) state: LibraryState,
+    pub(crate) book_id: String,
+    pub(crate) duplicate: bool,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -67,24 +76,32 @@ pub(crate) fn import_pdf(
     ids: &impl IdGenerator,
     path: String,
     title: String,
-) -> Result<LibraryState, ApplicationError> {
+) -> Result<ImportPdfResult, ApplicationError> {
     let book = port.store_pdf(path, title, ids.next_id("book"))?;
     let stored_file = book.stored_file.clone();
     let mut state = repository.load()?;
-    if state
-        .books
-        .iter()
-        .any(|existing| !book.content_hash.is_empty() && existing.content_hash == book.content_hash)
-    {
+    if let Some(existing) = state.books.iter().find(|existing| {
+        !book.content_hash.is_empty() && existing.content_hash == book.content_hash
+    }) {
+        let book_id = existing.id.clone();
         let _ = port.remove_pdf(&stored_file);
-        return Ok(state);
+        return Ok(ImportPdfResult {
+            state,
+            book_id,
+            duplicate: true,
+        });
     }
+    let book_id = book.id.clone();
     state.books.push(book);
     if let Err(error) = repository.commit(&state) {
         let _ = port.remove_pdf(&stored_file);
         return Err(ApplicationError::Persistence(error));
     }
-    Ok(state)
+    Ok(ImportPdfResult {
+        state,
+        book_id,
+        duplicate: false,
+    })
 }
 
 pub(crate) fn search_library(
@@ -331,7 +348,6 @@ mod tests {
                 outline: vec![],
                 reading: ReadingPosition::default(),
                 reading_completed: false,
-                study_completed: false,
                 retrospective: None,
                 ..Book::default()
             }],
@@ -361,7 +377,7 @@ mod tests {
     #[test]
     fn pdf_import_orchestrates_storage_and_atomic_repository_commit() {
         let repository = MemoryRepository(RefCell::new(LibraryState::default()));
-        let state = import_pdf(
+        let result = import_pdf(
             &MemoryPdf,
             &repository,
             &PredictableIds,
@@ -370,9 +386,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(state.books[0].id, "book-fixed");
-        assert_eq!(state.books[0].title, "Надёжные системы");
-        assert_eq!(*repository.0.borrow(), state);
+        assert_eq!(result.book_id, "book-fixed");
+        assert!(!result.duplicate);
+        assert_eq!(result.state.books[0].title, "Надёжные системы");
+        assert_eq!(*repository.0.borrow(), result.state);
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::adapters::codex::{
     CodexAdapter, CodexError, CodexErrorKind, CodexStreamEvent, CodexStreamEventKind,
 };
 use crate::adapters::sqlite_repository::{Library, LibraryError};
-use crate::application::{self, ApplicationError, SearchResult};
+use crate::application::{self, ApplicationError, ImportPdfResult, SearchResult};
 use crate::domain::{DomainErrorKind, LibraryAction, LibraryState, ReviewKind};
 use serde::Serialize;
 use std::{
@@ -125,7 +125,7 @@ pub(crate) fn import_pdf(
     path: String,
     title: String,
     state: tauri::State<'_, AppState>,
-) -> Result<LibraryState, CommandError> {
+) -> Result<ImportPdfResult, CommandError> {
     let library = state
         .library
         .lock()

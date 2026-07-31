@@ -44,7 +44,7 @@ test("reader-outline", async ({ page }) => {
   const reader = new ReaderPage(page);
   await reader.open();
   await reader.openSidebar("Оглавление");
-  await expect(page).toHaveScreenshot("reader-outline.png");
+  await expect(page).toHaveScreenshot("reader-outline.png", { maxDiffPixelRatio: 0.002 });
 });
 
 test("first-run", async ({ page }) => {

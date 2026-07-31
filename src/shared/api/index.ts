@@ -21,6 +21,7 @@ export {
   type CommandError,
   type DraftNote,
   type Idea,
+  type ImportPdfResult,
   type IdeaAssignment,
   type IdeaRelation,
   type LibraryAction,

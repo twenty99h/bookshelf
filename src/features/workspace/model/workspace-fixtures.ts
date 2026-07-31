@@ -115,6 +115,32 @@ export function activeLibraryFixture(): LibraryState {
       topicIds: ["topic-modeling"],
     },
     {
+      id: "idea-quorum",
+      bookId: "book-distributed",
+      section: "Глава 5 · Репликация",
+      formulation:
+        "Кворум подтверждений задаёт компромисс между доступностью записи и уверенностью, что данные переживут отказ узлов.",
+      assignments: ["recall"],
+      fragments: [
+        { page: 291, excerpt: "A write is durable after a quorum acknowledges it", context: "Quorum writes" },
+      ],
+      versions: [],
+      topicIds: ["topic-reliability"],
+    },
+    {
+      id: "idea-failure-model",
+      bookId: "book-distributed",
+      section: "Глава 8 · Проблемы распределённых систем",
+      formulation:
+        "Тайм-аут сообщает лишь об отсутствии ответа вовремя, поэтому неопределённость результата должна быть явной частью модели.",
+      assignments: ["experiment"],
+      fragments: [
+        { page: 376, excerpt: "A timeout cannot tell whether the request succeeded", context: "Partial failures" },
+      ],
+      versions: [],
+      topicIds: ["topic-reliability"],
+    },
+    {
       id: "idea-feedback",
       bookId: "book-refactoring",
       section: "Глава 2 · Принципы",
@@ -138,8 +164,6 @@ export function activeLibraryFixture(): LibraryState {
       action: "Сделать смену владельца журнала явным переходом состояния",
       result: "Команда увидела два ранее скрытых сценария восстановления",
       conclusion: "Лидерство полезно моделировать как аренду, а не как постоянную роль",
-      successful: false,
-      completed: false,
       status: "running",
       cancellationReason: "",
       nextStep: "Проверить восстановление после потери аренды",
@@ -189,7 +213,6 @@ function book(id: string, title: string, page: number, readingCompleted: boolean
     studyCycles: [],
     archived: false,
     readingCompleted,
-    studyCompleted,
     retrospective: studyCompleted
       ? {
           text: "Книга изменила способ дробить преобразования и проверять результат.",

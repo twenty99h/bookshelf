@@ -6,4 +6,4 @@ import type { Retrospective } from "./Retrospective";
 import type { StudyCycle } from "./StudyCycle";
 import type { StudyStatus } from "./StudyStatus";
 
-export type Book = { id: string, title: string, storedFile: string, hasTextLayer: boolean, outline: Array<OutlineItem>, reading: ReadingPosition, farthestPage: number, pageCount: number, contentHash: string, reader: ReaderPreferences, studyStatus: StudyStatus, studyCycles: Array<StudyCycle>, archived: boolean, readingCompleted: boolean, studyCompleted: boolean, retrospective: Retrospective | null, };
+export type Book = { id: string, title: string, storedFile: string, hasTextLayer: boolean, outline: Array<OutlineItem>, reading: ReadingPosition, farthestPage: number, pageCount: number, contentHash: string, reader: ReaderPreferences, studyStatus: StudyStatus, studyCycles: Array<StudyCycle>, archived: boolean, readingCompleted: boolean, retrospective: Retrospective | null, };

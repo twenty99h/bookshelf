@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AppWorkspace } from "@/pages/app-workspace";
+  import { DraftsPage } from "@/pages/drafts";
 </script>
 
-<AppWorkspace context="drafts" />
+<DraftsPage />

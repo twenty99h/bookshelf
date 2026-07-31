@@ -1,18 +1,31 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
-// @ts-expect-error process is a nodejs global
 const browserAdapter = process.env.BOOKSHELF_BROWSER_ADAPTER === "browser";
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [tailwindcss(), sveltekit()],
+  plugins: [
+    tailwindcss(),
+    sveltekit(),
+    browserAdapter && {
+      name: "bookshelf-browser-pdf-fixture",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "bookshelf-test.pdf",
+          source: readFileSync(new URL("./e2e/fixtures/bookshelf-test.pdf", import.meta.url)),
+        });
+      },
+    },
+  ],
   resolve: {
     alias: {
       "@/app": new URL("./src/app", import.meta.url).pathname,
+      "@/features": new URL("./src/features", import.meta.url).pathname,
       "@/pages": new URL("./src/pages", import.meta.url).pathname,
       "@/shared": new URL("./src/shared", import.meta.url).pathname,
     },

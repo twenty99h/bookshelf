@@ -62,15 +62,59 @@ export const browserWorkspaceCommands: WorkspaceCommands = {
       if (`${draft.excerpt} ${draft.comment}`.toLocaleLowerCase("ru").includes(needle))
         results.push({ id: draft.id, kind: "draft", title: draft.excerpt, context: "Черновая заметка" });
     }
+    for (const topic of state.topics) {
+      if (topic.name.toLocaleLowerCase("ru").includes(needle))
+        results.push({ id: topic.id, kind: "topic", title: topic.name, context: "Тема знаний" });
+    }
+    for (const material of state.materials) {
+      if (`${material.title} ${material.idea}`.toLocaleLowerCase("ru").includes(needle))
+        results.push({ id: material.id, kind: "material", title: material.title, context: "Материал" });
+    }
     return results;
   },
   async importPdf() {
     if (state.books.length === 0) state = activeLibraryFixture();
     commands.push({ kind: "importPdf" });
-    return persist();
+    return { state: persist(), bookId: state.books[0]?.id ?? "", duplicate: false };
   },
   async bookUrl() {
-    return null;
+    return "/bookshelf-test.pdf";
+  },
+  async exportDraft(draftId) {
+    commands.push({ kind: "exportDraft", draftId });
+    applyAction({ kind: "discardDraft", draftId });
+    return persist();
+  },
+  async prepareReview(ideaId, kind) {
+    commands.push({ kind: "prepareReview", ideaId, requestKind: kind });
+    const idea = state.ideas.find((item) => item.id === ideaId);
+    return `Инструкция: проверь ограничения.\n\nИсточник: ${idea?.fragments[0]?.excerpt ?? ""}\n\nАвторская формулировка: ${idea?.formulation ?? ""}`;
+  },
+  async runReview(ideaId, kind, approvedPackage) {
+    commands.push({ kind: "runReview", ideaId, requestKind: kind, approvedPackage });
+    state.reviews.push({
+      id: `review-${state.reviews.length + 1}`,
+      ideaId,
+      requestKind: kind,
+      response: "Проверьте границы применимости и сценарий смены лидера.",
+      pending: true,
+      decision: "pending",
+      conclusion: "",
+      reviewedAt: 1_785_283_200,
+    });
+    return persist();
+  },
+  async restoreBackup() {
+    commands.push({ kind: "restoreBackup" });
+    return persist();
+  },
+  async exportArchive() {
+    commands.push({ kind: "exportArchive" });
+    return true;
+  },
+  async importArchive() {
+    commands.push({ kind: "importArchive" });
+    return persist();
   },
 };
 
@@ -134,6 +178,21 @@ function applyAction(action: LibraryAction) {
       state.drafts = state.drafts.filter((item) => item.id !== action.draftId);
       break;
     }
+    case "attachDraftToIdea": {
+      const draft = state.drafts.find((item) => item.id === action.draftId);
+      const idea = state.ideas.find((item) => item.id === action.ideaId);
+      if (draft && idea && draft.bookId === idea.bookId) idea.fragments.push(...clone(draft.fragments));
+      if (draft && idea) state.drafts = state.drafts.filter((item) => item.id !== draft.id);
+      break;
+    }
+    case "deferDraft": {
+      const index = state.drafts.findIndex((item) => item.id === action.draftId);
+      if (index >= 0) state.drafts.push(...state.drafts.splice(index, 1));
+      break;
+    }
+    case "discardDraft":
+      state.drafts = state.drafts.filter((item) => item.id !== action.draftId);
+      break;
     case "activateStudy": {
       for (const book of state.books) {
         if (book.id === state.activeStudyBookId && book.id !== action.bookId) book.studyStatus = "paused";
@@ -152,8 +211,10 @@ function applyAction(action: LibraryAction) {
       const book = state.books.find((item) => item.id === action.bookId);
       if (book) {
         book.archived = true;
-        book.studyStatus = "archived";
-        if (state.activeStudyBookId === book.id) state.activeStudyBookId = null;
+        if (state.activeStudyBookId === book.id) {
+          book.studyStatus = "paused";
+          state.activeStudyBookId = null;
+        }
       }
       break;
     }
@@ -161,8 +222,50 @@ function applyAction(action: LibraryAction) {
       const book = state.books.find((item) => item.id === action.bookId);
       if (book) {
         book.archived = false;
-        book.studyStatus = book.studyCompleted ? "completed" : "paused";
       }
+      break;
+    }
+    case "completeRecall": {
+      const recall = state.recalls.find((item) => item.ideaId === action.ideaId);
+      if (recall) {
+        recall.answer = action.answer;
+        recall.rating = action.rating;
+        recall.nextAt = action.nextAt ?? 1_785_456_000;
+      }
+      break;
+    }
+    case "advanceExperiment": {
+      const experiment = state.experiments.find((item) => item.id === action.experimentId);
+      if (experiment) {
+        experiment.status = action.status;
+        experiment.situation = action.situation;
+        experiment.action = action.action;
+        experiment.result = action.result;
+        experiment.conclusion = action.conclusion;
+        experiment.cancellationReason = action.cancellationReason;
+        experiment.nextStep = action.nextStep;
+      }
+      break;
+    }
+    case "saveStudyCompletionDraft":
+      state.completionDrafts = [
+        ...state.completionDrafts.filter((item) => item.bookId !== action.draft.bookId),
+        clone(action.draft),
+      ];
+      break;
+    case "completeStudy": {
+      const book = state.books.find((item) => item.id === action.bookId);
+      if (book) {
+        book.studyStatus = "completed";
+        book.retrospective = {
+          text: action.retrospective,
+          significantIdeaIds: action.significantIdeaIds,
+          continuingWork: action.continuingWork,
+          unfinishedWorkDecision: action.unfinishedWorkDecision,
+        };
+      }
+      state.completionDrafts = state.completionDrafts.filter((item) => item.bookId !== action.bookId);
+      if (state.activeStudyBookId === action.bookId) state.activeStudyBookId = null;
       break;
     }
   }

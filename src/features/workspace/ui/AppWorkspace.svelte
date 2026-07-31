@@ -63,6 +63,7 @@
   let libraryFilter = $state("all");
   let librarySort = $state("recent");
   let draftMode = $state<"focus" | "list">("focus");
+  let selectedDraftId = $state("");
   let draftFormulation = $state("");
   let selectedTopic = $state("all");
   let recallAnswer = $state("");
@@ -71,6 +72,15 @@
   let completionStep = $state(1);
   let retrospective = $state("");
   let significantIdeas = $state<string[]>([]);
+  let unfinishedWorkDecision = $state("");
+  let continuingWork = $state("");
+  let codexReviewOpen = $state(false);
+  let codexPackage = $state("");
+  let codexReviewResult = $state("");
+  let backupPassword = $state("");
+  let backupStatus = $state("");
+  let experimentNextStep = $state("");
+  let experimentCancellationReason = $state("");
 
   let readerSidebar = $state<"note" | "outline" | "search" | null>(null);
   let readerSidebarWidth = $state(400);
@@ -79,9 +89,12 @@
   let readerMode = $state("muted");
   let readerImages = $state(true);
   let readerSearch = $state("");
+  let readerSearchResults = $state<{ page: number; excerpt: string }[]>([]);
   let readerExcerpt = $state("");
   let readerFragments = $state<{ page: number; excerpt: string; context: string }[]>([]);
   let readerComment = $state("");
+  let readerIdeaDraftId = $state("");
+  let readerIdeaFormulation = $state("");
   let saveState = $state<"saved" | "saving" | "error">("saved");
   let sidebarTrigger = $state<HTMLButtonElement | null>(null);
   let readerDocumentUrl = $state<string | null>(null);
@@ -103,21 +116,26 @@
     library?.books.find((book) => book.id === resourceId) ?? activeBook ?? library?.books[0] ?? null,
   );
   const selectedIdea = $derived(library?.ideas.find((idea) => idea.id === resourceId) ?? library?.ideas[0] ?? null);
-  const focusedDraft = $derived(library?.drafts[0] ?? null);
+  const focusedDraft = $derived(
+    library?.drafts.find((draft) => draft.id === selectedDraftId) ?? library?.drafts[0] ?? null,
+  );
   const unfinishedCount = $derived(
     (library?.drafts.length ?? 0) +
-      (library?.experiments.filter((experiment) => !experiment.completed).length ?? 0) +
+      (library?.experiments.filter((experiment) => !["completed", "cancelled"].includes(experiment.status)).length ??
+        0) +
       (library?.reviews.filter((review) => review.pending).length ?? 0),
   );
   const filteredBooks = $derived.by(() => {
     if (!library) return [];
     const snapshot = library;
     const books = snapshot.books.filter((book) => {
-      if (libraryFilter === "all") return true;
+      if (libraryFilter === "all") return !book.archived;
+      if (libraryFilter === "archived") return book.archived;
+      if (book.archived) return false;
       if (libraryFilter === "active") return book.id === snapshot.activeStudyBookId;
-      if (libraryFilter === "completed") return book.studyCompleted;
-      if (libraryFilter === "ready") return book.readingCompleted && !book.studyCompleted;
-      if (libraryFilter === "paused") return book.id !== snapshot.activeStudyBookId && !book.studyCompleted;
+      if (libraryFilter === "completed") return book.studyStatus === "completed";
+      if (libraryFilter === "ready") return book.readingCompleted && book.studyStatus !== "completed";
+      if (libraryFilter === "paused") return book.studyStatus === "paused";
       return true;
     });
     return books.toSorted((a, b) => {
@@ -131,6 +149,9 @@
     try {
       commands = await createWorkspaceCommands();
       library = await commands.load();
+      const query = new URLSearchParams(location.search);
+      selectedDraftId = query.get("draft") ?? "";
+      selectedTopic = query.get("topic") ?? "all";
       if (selectedBook) {
         readerPage = selectedBook.reading.page;
         readerZoom = selectedBook.reading.zoom;
@@ -144,6 +165,14 @@
         readerSidebarWidth = selectedBook.reader.sidebarWidth;
         readerSidebar = selectedBook.reader.sidebarOpen ? selectedBook.reader.sidebarTab : null;
         if (context === "reader") readerDocumentUrl = await commands.bookUrl(selectedBook.id);
+        const completionDraft = library.completionDrafts.find((draft) => draft.bookId === selectedBook.id);
+        if (completionDraft) {
+          completionStep = completionDraft.step;
+          significantIdeas = completionDraft.significantIdeaIds;
+          retrospective = completionDraft.retrospective;
+          unfinishedWorkDecision = completionDraft.unfinishedWorkDecision;
+          continuingWork = completionDraft.continuingWork;
+        }
       }
     } catch (cause) {
       error = commandErrorMessage(cause);
@@ -152,16 +181,18 @@
     }
   });
 
-  async function run(action: LibraryAction, message = "Сохранено") {
-    if (!commands) return;
+  async function run(action: LibraryAction, message = "Сохранено"): Promise<boolean> {
+    if (!commands) return false;
     busy = true;
     error = "";
     feedback = "";
     try {
       library = await commands.execute(action);
       feedback = message;
+      return true;
     } catch (cause) {
       error = commandErrorMessage(cause);
+      return false;
     } finally {
       busy = false;
     }
@@ -171,11 +202,11 @@
     if (!commands) return;
     busy = true;
     try {
-      const snapshot = await commands.importPdf();
-      if (snapshot) {
-        library = snapshot;
-        const imported = snapshot.books[0];
-        if (imported) await goto(resolve("/library/[bookId]", { bookId: imported.id }));
+      const result = await commands.importPdf();
+      if (result) {
+        library = result.state;
+        feedback = result.duplicate ? "Эта редакция PDF уже есть в библиотеке" : "PDF импортирован";
+        await goto(resolve("/library/[bookId]", { bookId: result.bookId }));
       }
     } catch (cause) {
       error = commandErrorMessage(cause);
@@ -193,7 +224,9 @@
     paletteOpen = false;
     if (result.kind === "book") goto(resolve("/library/[bookId]", { bookId: result.id }));
     else if (result.kind === "idea") goto(resolve("/knowledge/[ideaId]", { ideaId: result.id }));
-    else if (result.kind === "draft" || result.kind === "material") goto(resolve("/drafts"));
+    else if (result.kind === "topic") goto(resolve(`/knowledge?topic=${encodeURIComponent(result.id)}`));
+    else if (result.kind === "draft") goto(resolve(`/drafts?draft=${encodeURIComponent(result.id)}`));
+    else if (result.kind === "material") goto(resolve(`/drafts?material=${encodeURIComponent(result.id)}`));
   }
 
   function handleGlobalKeydown(event: KeyboardEvent) {
@@ -212,13 +245,6 @@
       event.preventDefault();
       setReaderSidebar("search");
     }
-  }
-
-  function captureSelection() {
-    const selection = window.getSelection()?.toString().trim();
-    if (!selection) return;
-    readerExcerpt = selection;
-    setReaderSidebar("note");
   }
 
   function setReaderSidebar(tab: "note" | "outline" | "search") {
@@ -257,15 +283,16 @@
     );
   }
 
-  async function saveReaderDraft() {
-    if (!selectedBook || !readerExcerpt.trim()) return;
-    await run(
+  async function saveReaderDraft(): Promise<string | null> {
+    if (!selectedBook || !readerExcerpt.trim()) return null;
+    const existingDraftIds = new Set(library?.drafts.map((draft) => draft.id) ?? []);
+    const saved = await run(
       readerFragments.length
         ? {
             kind: "captureDraftSources",
             bookId: selectedBook.id,
             section: "Глава 5 · Репликация",
-            fragments: readerFragments,
+            fragments: readerFragments.map((fragment) => ({ ...fragment })),
             comment: readerComment,
           }
         : {
@@ -279,21 +306,61 @@
           },
       "Черновая заметка сохранена",
     );
+    if (!saved) return null;
+    const createdDraft = library?.drafts.find((draft) => !existingDraftIds.has(draft.id)) ?? null;
     readerExcerpt = "";
     readerFragments = [];
     readerComment = "";
+    return createdDraft?.id ?? null;
+  }
+
+  async function startReaderIdea() {
+    const draftId = await saveReaderDraft();
+    if (draftId) readerIdeaDraftId = draftId;
+  }
+
+  async function createReaderIdea() {
+    if (!readerIdeaDraftId || !readerIdeaFormulation.trim()) return;
+    const draft = library?.drafts.find((item) => item.id === readerIdeaDraftId);
+    if (!draft) return;
+    const created = await run(
+      {
+        kind: "resolveDraftAsIdea",
+        draftId: draft.id,
+        formulation: readerIdeaFormulation,
+        section: draft.section,
+        assignments: [],
+      },
+      "Идея сохранена; учебное назначение можно выбрать позже",
+    );
+    if (created) {
+      readerIdeaDraftId = "";
+      readerIdeaFormulation = "";
+    }
   }
 
   async function saveReaderPosition(page = readerPage) {
     if (!selectedBook) return;
     readerPage = page;
     saveState = "saving";
-    try {
-      await run({ kind: "updateReading", bookId: selectedBook.id, page, zoom: readerZoom, scroll: 0.32 }, "");
-      saveState = "saved";
-    } catch {
-      saveState = "error";
-    }
+    saveState = (await run(
+      { kind: "updateReading", bookId: selectedBook.id, page, zoom: readerZoom, scroll: 0.32 },
+      "",
+    ))
+      ? "saved"
+      : "error";
+  }
+
+  function changeReaderZoom(delta: number) {
+    readerZoom = Math.min(2, Math.max(0.5, readerZoom + delta));
+    void saveReaderPosition();
+  }
+
+  function openSavedSource(source: { page: number; excerpt: string; context: string }) {
+    readerPage = source.page;
+    readerExcerpt = source.excerpt;
+    readerFragments = [source];
+    setReaderSidebar("note");
   }
 
   function capturePdfSelection(fragments: { page: number; excerpt: string; context: string }[]) {
@@ -308,9 +375,9 @@
   function savePdfPosition(page: number, scroll: number) {
     readerPage = page;
     saveState = "saving";
-    void run({ kind: "updateReading", bookId: selectedBook!.id, page, zoom: readerZoom, scroll }, "")
-      .then(() => (saveState = "saved"))
-      .catch(() => (saveState = "error"));
+    void run({ kind: "updateReading", bookId: selectedBook!.id, page, zoom: readerZoom, scroll }, "").then(
+      (saved) => (saveState = saved ? "saved" : "error"),
+    );
   }
 
   async function resolveDraft() {
@@ -321,15 +388,153 @@
         draftId: focusedDraft.id,
         formulation: draftFormulation,
         section: focusedDraft.section,
-        assignments: ["recall"],
+        assignments: [],
       },
       "Идея сформулирована; источник сохранён",
     );
     draftFormulation = "";
   }
 
+  async function attachFocusedDraft() {
+    const idea = library?.ideas.find((item) => item.bookId === focusedDraft?.bookId);
+    if (!focusedDraft || !idea) return;
+    await run({ kind: "attachDraftToIdea", draftId: focusedDraft.id, ideaId: idea.id }, "Источник присоединён к идее");
+  }
+
+  async function exportFocusedDraft() {
+    if (!focusedDraft || !commands) return;
+    try {
+      const snapshot = await commands.exportDraft(focusedDraft.id);
+      if (snapshot) {
+        library = snapshot;
+        feedback = "Черновая заметка экспортирована";
+      }
+    } catch (cause) {
+      error = commandErrorMessage(cause);
+    }
+  }
+
+  async function prepareIdeaReview() {
+    if (!selectedIdea || !commands) return;
+    try {
+      codexPackage = await commands.prepareReview(selectedIdea.id, "ideaReview");
+      codexReviewResult = "";
+      codexReviewOpen = true;
+    } catch (cause) {
+      error = commandErrorMessage(cause);
+    }
+  }
+
+  async function runIdeaReview() {
+    if (!selectedIdea || !commands || !codexPackage) return;
+    try {
+      library = await commands.runReview(selectedIdea.id, "ideaReview", codexPackage);
+      codexReviewResult = "Проверка завершена. Ответ сохранён как ожидающее вашего решения замечание.";
+    } catch (cause) {
+      codexReviewResult = commandErrorMessage(cause);
+    }
+  }
+
+  async function completeRecall(rating: "confident" | "partial" | "notRecalled") {
+    const idea = library?.ideas[0];
+    if (!idea || !recallAnswer.trim()) return;
+    await run(
+      { kind: "completeRecall", ideaId: idea.id, answer: recallAnswer, rating },
+      "Решение восстановления сохранено",
+    );
+  }
+
+  async function advanceExperiment(status: "reviewing" | "completed" | "cancelled") {
+    const experiment = library?.experiments[0];
+    if (!experiment) return;
+    await run(
+      {
+        kind: "advanceExperiment",
+        experimentId: experiment.id,
+        status,
+        situation: experiment.situation,
+        action: experiment.action,
+        result: experiment.result,
+        conclusion: experiment.conclusion,
+        cancellationReason: experimentCancellationReason,
+        nextStep: experimentNextStep || experiment.nextStep,
+      },
+      "Состояние эксперимента сохранено",
+    );
+    experimentStep = status === "reviewing" ? "review" : status;
+  }
+
+  async function saveCompletionStep(nextStep: number) {
+    if (!selectedBook) return;
+    await run(
+      {
+        kind: "saveStudyCompletionDraft",
+        draft: {
+          bookId: selectedBook.id,
+          step: nextStep,
+          readingConfirmed: nextStep > 1,
+          significantIdeaIds: significantIdeas,
+          retrospective,
+          unfinishedWorkDecision,
+          continuingWork,
+        },
+      },
+      "Черновик итога сохранён",
+    );
+    completionStep = nextStep;
+  }
+
+  async function finishStudy() {
+    if (!selectedBook) return;
+    await run(
+      {
+        kind: "completeStudy",
+        bookId: selectedBook.id,
+        retrospective,
+        significantIdeaIds: significantIdeas,
+        continuingWork,
+        unfinishedWorkDecision,
+      },
+      "Изучение завершено; продолжающаяся работа сохранена",
+    );
+  }
+
+  async function restoreBackup() {
+    if (!commands) return;
+    try {
+      backupStatus = "Восстановление…";
+      library = await commands.restoreBackup();
+      backupStatus = "Последний snapshot восстановлен";
+    } catch (cause) {
+      backupStatus = commandErrorMessage(cause);
+    }
+  }
+
+  async function exportArchive() {
+    if (!commands) return;
+    try {
+      backupStatus = "Экспорт…";
+      backupStatus = (await commands.exportArchive(backupPassword)) ? "Переносимый архив сохранён" : "Экспорт отменён";
+    } catch (cause) {
+      backupStatus = commandErrorMessage(cause);
+    }
+  }
+
+  async function importArchive() {
+    if (!commands) return;
+    try {
+      backupStatus = "Импорт…";
+      const snapshot = await commands.importArchive(backupPassword);
+      if (snapshot) library = snapshot;
+      backupStatus = snapshot ? "Архив импортирован" : "Импорт отменён";
+    } catch (cause) {
+      backupStatus = commandErrorMessage(cause);
+    }
+  }
+
   function bookStatus(book: Book): string {
-    if (book.studyCompleted) return "Завершено";
+    if (book.archived) return "В архиве";
+    if (book.studyStatus === "completed") return "Завершено";
     if (book.id === library?.activeStudyBookId) return "Активное изучение";
     if (book.readingCompleted) return "Готово к завершению";
     return "Приостановлено";
@@ -363,7 +568,6 @@
 </script>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
-<svelte:document onselectionchange={captureSelection} />
 
 {#if context === "reader"}
   {@render readerView()}
@@ -474,6 +678,18 @@
         </button>
       {/each}
     </div>
+  </DialogModal>
+  <DialogModal
+    bind:open={codexReviewOpen}
+    title="Проверка идеи Codex"
+    description="Проверьте минимальный пакет перед явной отправкой. PDF и другие записи не включены."
+  >
+    {#snippet trigger()}<span class="sr-only">Открыть проверку идеи</span>{/snippet}
+    <TextArea id="codex-package" label="Подтверждаемый пакет" bind:value={codexPackage} />
+    <Button variant="primary" disabled={!codexPackage.trim()} onclick={runIdeaReview}>Запустить проверку</Button>
+    {#if codexReviewResult}<p class="rounded-md border border-white/8 bg-night/40 p-4 text-sm" role="status">
+        {codexReviewResult}
+      </p>{/if}
   </DialogModal>
 {/if}
 
@@ -587,7 +803,7 @@
             )}
             {@render workRow(
               "Эксперименты",
-              `${library!.experiments.filter((experiment) => !experiment.completed).length}`,
+              `${library!.experiments.filter((experiment) => !["completed", "cancelled"].includes(experiment.status)).length}`,
               "/practice",
             )}
           </div>
@@ -639,7 +855,7 @@
   </div>
   <div class="mb-4 grid grid-cols-[minmax(0,1fr)_220px] gap-4">
     <div class="flex flex-wrap gap-2" aria-label="Фильтры библиотеки">
-      {#each [["all", "Все"], ["active", "Активные"], ["paused", "Приостановленные"], ["ready", "Готовые"], ["completed", "Завершённые"]] as option (option[0])}<button
+      {#each [["all", "Все"], ["active", "Активные"], ["paused", "Приостановленные"], ["ready", "Готовые"], ["completed", "Завершённые"], ["archived", "Архив"]] as option (option[0])}<button
           class="rounded-md border px-3 py-2 text-sm data-[active=true]:border-iris/40 data-[active=true]:bg-iris/12 data-[active=true]:text-mist data-[active=false]:border-white/8 data-[active=false]:text-mist-dim"
           data-active={libraryFilter === option[0]}
           onclick={() => (libraryFilter = option[0] ?? "all")}>{option[1]}</button
@@ -706,7 +922,9 @@
         <p class="font-mono text-xs uppercase tracking-[.14em] text-iris">{bookStatus(selectedBook)}</p>
         <h2 class="mt-3 text-4xl font-semibold tracking-[-.035em]">{selectedBook.title}</h2>
         <p class="mt-4 text-mist-dim">
-          PDF · 612 страниц · {selectedBook.hasTextLayer ? "есть оглавление и текстовый слой" : "без текстового слоя"}
+          PDF · {selectedBook.pageCount} страниц · {selectedBook.hasTextLayer
+            ? "есть оглавление и текстовый слой"
+            : "без текстового слоя — доступна ручная заметка к странице"}
         </p>
         <div class="mt-7 flex gap-3">
           <a
@@ -719,6 +937,22 @@
             aria-label="Другие действия"
             class="grid size-11 place-items-center rounded-md border border-white/10"><MoreHorizontal /></button
           >
+        </div>
+        <div class="mt-4 flex gap-4 text-sm">
+          {#if selectedBook.archived}<button
+              class="text-iris"
+              onclick={() => run({ kind: "restoreBook", bookId: selectedBook.id }, "Книга возвращена из архива")}
+              >Вернуть из архива</button
+            >{:else}<button
+              class="text-mist-dim"
+              onclick={() => run({ kind: "archiveBook", bookId: selectedBook.id }, "Книга перемещена в архив")}
+              >Архивировать</button
+            >{/if}
+          {#if selectedBook.studyStatus === "completed"}<button
+              class="text-iris"
+              onclick={() => run({ kind: "startRepeatStudy", bookId: selectedBook.id }, "Начат новый цикл изучения")}
+              >Начать повторное изучение</button
+            >{/if}
         </div>
       </div>
       <aside class="rounded-xl border border-white/8 bg-slate p-5 max-[1280px]:col-span-2">
@@ -849,7 +1083,10 @@
         <div class="mt-5 flex flex-wrap gap-2">
           <Button variant="primary" onclick={resolveDraft} disabled={!draftFormulation.trim() || busy}
             >Создать идею</Button
-          ><Button>Присоединить к идее</Button><Button>Отложить</Button><Button>Экспортировать</Button><Button
+          ><Button onclick={attachFocusedDraft}>Присоединить к идее</Button><Button
+            onclick={() => run({ kind: "deferDraft", draftId: focusedDraft.id }, "Заметка отложена")}>Отложить</Button
+          ><Button onclick={exportFocusedDraft}>Экспортировать</Button><Button
+            onclick={() => run({ kind: "discardDraft", draftId: focusedDraft.id }, "Черновая заметка удалена")}
             >Удалить</Button
           >
         </div>
@@ -946,7 +1183,7 @@
             Перед запуском вы увидите пакет из инструкции, этого источника и своей формулировки. Другие записи и PDF
             целиком не передаются.
           </p>
-          <Button>Подготовить проверку</Button>
+          <Button onclick={prepareIdeaReview}>Подготовить проверку</Button>
         </section>
       </article>{/if}
   </section>
@@ -972,7 +1209,9 @@
         <div class="mt-5">
           <p class="mb-3 text-sm font-semibold">Как удалось восстановить?</p>
           <div class="flex gap-2">
-            <Button>Уверенно</Button><Button>Частично</Button><Button>Не восстановил</Button>
+            <Button onclick={() => completeRecall("confident")}>Уверенно</Button><Button
+              onclick={() => completeRecall("partial")}>Частично</Button
+            ><Button onclick={() => completeRecall("notRecalled")}>Не восстановил</Button>
           </div>
           <p class="mt-4 text-sm text-mist-dim">
             Следующее восстановление предложено на 3 августа. Его можно перенести или запустить раньше.
@@ -1002,10 +1241,17 @@
         )}{@render step("Завершён", false, "Положительный результат не обязателен.")}
       </div>
       <div class="mt-8 flex gap-2">
-        <Button variant="primary" onclick={() => (experimentStep = "review")}>Перейти к итогу</Button><Button
-          >Записать следующий шаг</Button
-        ><Button>Отменить с причиной</Button>
+        <Button variant="primary" onclick={() => advanceExperiment("reviewing")}>Перейти к итогу</Button><Button
+          onclick={() => advanceExperiment("completed")}>Завершить с результатом</Button
+        >
       </div>
+      <div class="mt-5 grid grid-cols-2 gap-4">
+        <TextField id="experiment-next" label="Следующий шаг (без даты)" bind:value={experimentNextStep} />
+        <TextField id="experiment-cancel" label="Причина отмены" bind:value={experimentCancellationReason} />
+      </div>
+      <Button disabled={!experimentCancellationReason.trim()} onclick={() => advanceExperiment("cancelled")}
+        >Отменить с причиной</Button
+      >
     </section>
   </div>
 {/snippet}
@@ -1040,10 +1286,16 @@
           Это фиксирует окончание работы с текстом, но ещё не завершает изучение книги.
         </p>
         <div class="mt-7">
-          <Button variant="primary" onclick={() => (completionStep = 2)}>Чтение завершено</Button>
+          <Button
+            variant="primary"
+            onclick={async () => {
+              if (selectedBook) await run({ kind: "completeReading", bookId: selectedBook.id }, "Чтение завершено");
+              await saveCompletionStep(2);
+            }}>Чтение завершено</Button
+          >
         </div>{:else if completionStep === 2}<h2 class="mt-3 text-3xl font-semibold">Выберите 3–7 значимых идей</h2>
         <div class="mt-6 grid gap-3">
-          {#each library!.ideas as idea (idea.id)}<CheckboxField
+          {#each library!.ideas.filter((idea) => idea.bookId === selectedBook?.id) as idea (idea.id)}<CheckboxField
               id={`significant-${idea.id}`}
               label={idea.formulation}
               checked={significantIdeas.includes(idea.id)}
@@ -1051,11 +1303,15 @@
             />{/each}
         </div>
         <div class="mt-7">
-          <Button variant="primary" onclick={() => (completionStep = 3)}>Продолжить</Button>
+          <Button
+            variant="primary"
+            disabled={significantIdeas.length < 3 || significantIdeas.length > 7}
+            onclick={() => saveCompletionStep(3)}>Продолжить</Button
+          >
         </div>{:else if completionStep === 3}<h2 class="mt-3 text-3xl font-semibold">Ретроспектива книги</h2>
         <p class="mt-3 text-mist-dim">Что изменилось в вашем понимании или действиях? Итог пишете вы.</p>
         <div class="mt-6"><TextArea id="retrospective" label="Авторский итог" bind:value={retrospective} /></div>
-        <Button variant="primary" disabled={!retrospective.trim()} onclick={() => (completionStep = 4)}
+        <Button variant="primary" disabled={!retrospective.trim()} onclick={() => saveCompletionStep(4)}
           >Сохранить черновик и продолжить</Button
         >{:else}<h2 class="mt-3 text-3xl font-semibold">Незавершённая работа сохранится</h2>
         <p class="mt-4 leading-7 text-mist-dim">
@@ -1066,12 +1322,23 @@
           <p>Черновики <span class="float-right font-mono">{library!.drafts.length}</span></p>
           <p class="mt-3">
             Продолжающиеся эксперименты <span class="float-right font-mono"
-              >{library!.experiments.filter((item) => !item.completed).length}</span
+              >{library!.experiments.filter((item) => !["completed", "cancelled"].includes(item.status)).length}</span
             >
           </p>
         </div>
+        <div class="mt-6 grid grid-cols-2 gap-4">
+          <TextArea
+            id="unfinished-work-decision"
+            label="Решение по незавершённой работе"
+            bind:value={unfinishedWorkDecision}
+          />
+          <TextArea id="continuing-work" label="Продолжающиеся эксперименты" bind:value={continuingWork} />
+        </div>
         <div class="mt-7">
-          <Button variant="primary" onclick={() => (completionStep = Math.min(6, completionStep + 1))}
+          <Button
+            variant="primary"
+            disabled={!unfinishedWorkDecision.trim()}
+            onclick={() => (completionStep === 6 ? finishStudy() : saveCompletionStep(Math.min(6, completionStep + 1)))}
             >{completionStep === 6 ? "Завершить изучение" : "Продолжить"}</Button
           >
         </div>{/if}
@@ -1120,14 +1387,21 @@
           <div class="rounded-lg border border-white/8 bg-night/30 p-5">
             <b>Автоматический snapshot</b>
             <p class="mt-2 text-sm leading-6 text-mist-dim">Последняя внутренняя копия: 30 июля 2026, 18:40.</p>
-            <Button>Восстановить последний</Button>
+            <Button onclick={restoreBackup}>Восстановить последний</Button>
           </div>
           <div class="rounded-lg border border-white/8 bg-night/30 p-5">
             <b>Переносимый архив</b>
             <p class="mt-2 text-sm leading-6 text-mist-dim">Последний экспорт: 12 июля 2026. Архив защищён паролем.</p>
-            <div class="flex gap-2"><Button>Экспортировать</Button><Button>Импортировать</Button></div>
+            <TextField id="backup-password" label="Пароль архива" type="password" bind:value={backupPassword} />
+            <div class="flex gap-2">
+              <Button disabled={!backupPassword} onclick={exportArchive}>Экспортировать</Button><Button
+                disabled={!backupPassword}
+                onclick={importArchive}>Импортировать</Button
+              >
+            </div>
           </div>
         </div>
+        {#if backupStatus}<p class="mt-4 text-sm text-mist-dim" role="status">{backupStatus}</p>{/if}
       </section>
       <section class="rounded-xl border border-white/8 bg-slate p-7">
         <div class="flex items-center">
@@ -1168,11 +1442,11 @@
         <button
           aria-label="Уменьшить масштаб"
           class="grid size-10 place-items-center rounded-md hover:bg-slate"
-          onclick={() => (readerZoom = Math.max(0.5, readerZoom - 0.1))}><ZoomOut class="size-4" /></button
+          onclick={() => changeReaderZoom(-0.1)}><ZoomOut class="size-4" /></button
         ><span class="w-14 text-center font-mono text-xs">{Math.round(readerZoom * 100)}%</span><button
           aria-label="Увеличить масштаб"
           class="grid size-10 place-items-center rounded-md hover:bg-slate"
-          onclick={() => (readerZoom = Math.min(2, readerZoom + 0.1))}><ZoomIn class="size-4" /></button
+          onclick={() => changeReaderZoom(0.1)}><ZoomIn class="size-4" /></button
         ><button
           aria-label="Поиск в книге"
           class="ml-2 grid size-10 place-items-center rounded-md hover:bg-slate"
@@ -1204,6 +1478,12 @@
             invertImages={readerImages}
             onPosition={savePdfPosition}
             onSelection={capturePdfSelection}
+            searchQuery={readerSearch}
+            onSearchResults={(results) => (readerSearchResults = results)}
+            sources={library?.drafts
+              .filter((draft) => draft.bookId === selectedBook?.id)
+              .flatMap((draft) => draft.fragments) ?? []}
+            onSourceSelect={openSavedSource}
             onOutline={(outline) => {
               if (selectedBook && outline.length && selectedBook.outline.length === 0)
                 void run({ kind: "saveOutline", bookId: selectedBook.id, outline }, "");
@@ -1286,7 +1566,9 @@
                 </p>
                 <h2 class="mt-2 text-xl font-semibold">Черновая заметка</h2>
                 <p class="mt-2 text-sm leading-6 text-mist-dim">
-                  Выделите текст в документе. Источник сохранится отдельно от вашей мысли.
+                  {selectedBook?.hasTextLayer
+                    ? "Выделите текст в документе. Источник сохранится отдельно от вашей мысли."
+                    : "В этом PDF нет текстового слоя. Укажите фрагмент вручную — заметка сохранится с явной страницей. OCR не выполняется."}
                 </p>
                 <div class="mt-5 grid gap-4">
                   <TextArea id="reader-excerpt" label="Фрагмент книги" bind:value={readerExcerpt} required /><TextArea
@@ -1295,7 +1577,21 @@
                     bind:value={readerComment}
                   /><Button variant="primary" onclick={saveReaderDraft} disabled={!readerExcerpt.trim()}
                     >В черновики · Ctrl+Enter</Button
-                  ><Button>Оформить как идею</Button>
+                  ><Button onclick={startReaderIdea} disabled={!readerExcerpt.trim()}>Оформить как идею</Button>
+                  {#if readerIdeaDraftId}<div class="rounded-lg border border-iris/30 bg-iris/8 p-4">
+                      <TextArea
+                        id="reader-idea-formulation"
+                        label="Моя формулировка идеи"
+                        bind:value={readerIdeaFormulation}
+                        required
+                      />
+                      <Button variant="primary" onclick={createReaderIdea} disabled={!readerIdeaFormulation.trim()}
+                        >Создать идею</Button
+                      >
+                      <p class="mt-3 text-xs leading-5 text-mist-dim">
+                        Источник уже сохранён. Восстановление, практика или передача назначаются отдельно.
+                      </p>
+                    </div>{/if}
                 </div>
                 <div class="mt-7 border-t border-white/8 pt-5">
                   <h3 class="text-sm font-semibold">Последние заметки книги</h3>
@@ -1322,10 +1618,14 @@
                     placeholder="Найти без учёта регистра"
                   />
                 </div>
-                {#if readerSearch}<p class="mt-5 font-mono text-xs text-mist-dim">3 результата · 1 из 3</p>
-                  <button class="mt-3 rounded-lg border border-white/8 bg-slate p-4 text-left text-sm"
-                    ><mark class="bg-amber/30 text-mist">{readerSearch}</mark> в потоке изменений лидера…</button
-                  >{/if}{/if}
+                {#if readerSearch}<p class="mt-5 font-mono text-xs text-mist-dim">
+                    {readerSearchResults.length} результатов
+                  </p>
+                  {#each readerSearchResults as result (`${result.page}-${result.excerpt}`)}<button
+                      class="mt-3 rounded-lg border border-white/8 bg-slate p-4 text-left text-sm"
+                      onclick={() => saveReaderPosition(result.page)}
+                      ><span class="font-mono text-amber">стр. {result.page}</span> {result.excerpt}</button
+                    >{/each}{/if}{/if}
             </div>
             <label class="border-t border-white/8 p-3 text-[10px] text-mist-faint"
               >Ширина панели <input

@@ -13,6 +13,50 @@ fn clean_launch_opens_an_empty_personal_library() {
 }
 
 #[test]
+fn complete_legacy_state_migrates_to_the_versioned_workspace_envelope() {
+    let data_dir = test_data_dir();
+    fs::create_dir_all(&data_dir).unwrap();
+    fs::write(
+        data_dir.join("library.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "books": [], "drafts": [], "ideas": [], "topics": [], "ideaLinks": [],
+            "experiments": [], "recalls": [], "sessions": [], "materials": [], "reviews": [],
+            "workspaceNote": "legacy", "activeStudyBookId": null, "weeklySessionBudget": 3,
+            "lastDebtChange": 0, "lastDebtChangedAt": 0, "debtNotificationSentAt": null,
+            "debtReminderDays": 7
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let library = Library::open(&data_dir).unwrap();
+
+    assert_eq!(library.load().unwrap().workspace_note, "legacy");
+    assert!(data_dir.join("library.json.migrated").exists());
+    fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
+fn partial_workspace_migration_is_rejected_without_rewriting_the_source() {
+    let data_dir = test_data_dir();
+    fs::create_dir_all(&data_dir).unwrap();
+    let partial = r#"{"books":[],"drafts":[],"ideas":[]}"#;
+    fs::write(data_dir.join("library.json"), partial).unwrap();
+
+    let error = Library::open(&data_dir)
+        .err()
+        .expect("partial state must fail");
+
+    assert!(error.to_string().contains("частично преобразовано"));
+    assert_eq!(
+        fs::read_to_string(data_dir.join("library.json")).unwrap(),
+        partial
+    );
+    assert!(!data_dir.join("library.json.migrated").exists());
+    fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
 fn workspace_change_survives_a_desktop_restart() {
     let data_dir = test_data_dir();
     Library::open(&data_dir)
@@ -49,6 +93,27 @@ fn repeated_workspace_changes_replace_state_portably() {
     assert_eq!(library.load().unwrap().workspace_note, "Актуальная пометка");
     assert!(data_dir.join("library.sqlite3").exists());
     fs::remove_dir_all(data_dir).unwrap();
+}
+
+#[test]
+fn repeat_study_pauses_the_previous_active_book() {
+    let mut state = LibraryState::default();
+    let mut active = Book::for_test("active", "Активная книга");
+    active.study_status = StudyStatus::Active;
+    let mut completed = Book::for_test("completed", "Завершённая книга");
+    completed.study_status = StudyStatus::Completed;
+    state.books = vec![active, completed];
+    state.active_study_book_id = Some("active".into());
+
+    state
+        .apply(LibraryAction::StartRepeatStudy {
+            book_id: "completed".into(),
+        })
+        .unwrap();
+
+    assert_eq!(state.active_study_book_id.as_deref(), Some("completed"));
+    assert_eq!(state.books[0].study_status, StudyStatus::Paused);
+    assert_eq!(state.books[1].study_status, StudyStatus::Repeating);
 }
 
 #[test]
@@ -169,7 +234,7 @@ fn activating_another_study_preserves_work_and_keeps_only_one_active() {
 }
 
 #[test]
-fn resolving_a_draft_requires_an_authored_idea_source_and_assignment() {
+fn resolving_a_draft_requires_authored_text_but_allows_assignment_later() {
     let mut state = LibraryState::default();
     state.books.push(Book::for_test("book", "Книга"));
     state.drafts.push(DraftNote::for_test("draft", "book"));
@@ -182,6 +247,17 @@ fn resolving_a_draft_requires_an_authored_idea_source_and_assignment() {
     assert_eq!(result.unwrap_err().code(), "idea_fields_required");
     assert_eq!(state.drafts.len(), 1);
     assert!(state.ideas.is_empty());
+
+    state
+        .apply(LibraryAction::ResolveDraftAsIdea {
+            draft_id: "draft".into(),
+            formulation: "Неопределённость результата должна быть частью модели".into(),
+            section: "Глава 1".into(),
+            assignments: vec![],
+        })
+        .unwrap();
+    assert!(state.drafts.is_empty());
+    assert!(state.ideas[0].assignments.is_empty());
 }
 
 #[test]
@@ -228,11 +304,9 @@ fn a_negative_practical_experiment_is_a_valid_completed_experiment() {
             action: "Применил паттерн".into(),
             result: "Усложнил поддержку".into(),
             conclusion: "Не применять для малого сервиса".into(),
-            successful: false,
         })
         .unwrap();
-    assert!(!state.experiments[0].successful);
-    assert!(state.experiments[0].completed);
+    assert_eq!(state.experiments[0].status, ExperimentStatus::Completed);
 }
 
 #[test]
@@ -465,7 +539,7 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
     let library = Library::open(&data_dir).unwrap();
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pdf");
     let text_layer = corpus.join("text-layer.pdf");
-    let state = crate::application::import_pdf(
+    let result = crate::application::import_pdf(
         &library.reading_storage(),
         &library,
         &SystemIdGenerator,
@@ -473,7 +547,7 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
         String::new(),
     )
     .unwrap();
-    let imported = state.books.last().unwrap();
+    let imported = result.state.books.last().unwrap();
     assert!(imported.has_text_layer);
     assert!(library.absolute_book_path(&imported.stored_file).is_file());
 
@@ -486,7 +560,7 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
             .windows(marker.len())
             .any(|window| window == marker));
     }
-    let state = crate::application::import_pdf(
+    let result = crate::application::import_pdf(
         &library.reading_storage(),
         &library,
         &SystemIdGenerator,
@@ -494,10 +568,10 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
         "Спецификация с оглавлением".into(),
     )
     .unwrap();
-    assert!(state.books.last().unwrap().has_text_layer);
+    assert!(result.state.books.last().unwrap().has_text_layer);
 
     let scanned = corpus.join("image-only.pdf");
-    let state = crate::application::import_pdf(
+    let result = crate::application::import_pdf(
         &library.reading_storage(),
         &library,
         &SystemIdGenerator,
@@ -505,12 +579,12 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
         "Скан".into(),
     )
     .unwrap();
-    let scanned_book = state.books.last().unwrap();
+    let scanned_book = result.state.books.last().unwrap();
     assert!(!scanned_book.has_text_layer);
     assert!(!scanned_book.content_hash.is_empty());
 
-    let before_duplicate = state.books.len();
-    let state = crate::application::import_pdf(
+    let before_duplicate = result.state.books.len();
+    let result = crate::application::import_pdf(
         &library.reading_storage(),
         &library,
         &SystemIdGenerator,
@@ -518,7 +592,8 @@ fn pdf_import_corpus_covers_text_variants_scans_and_duplicate_hashes() {
         "Повторный скан".into(),
     )
     .unwrap();
-    assert_eq!(state.books.len(), before_duplicate);
+    assert!(result.duplicate);
+    assert_eq!(result.state.books.len(), before_duplicate);
     fs::remove_dir_all(data_dir).unwrap();
 }
 
@@ -655,7 +730,6 @@ fn large_atomic_snapshot_round_trip_reports_size_and_elapsed_time() {
                 scroll: 320.0,
             },
             reading_completed: index % 2 == 0,
-            study_completed: false,
             retrospective: None,
             ..Book::default()
         });
@@ -702,8 +776,6 @@ fn large_atomic_snapshot_round_trip_reports_size_and_elapsed_time() {
             action: "Проверенное действие".into(),
             result: "Наблюдаемый результат".into(),
             conclusion: "Авторский вывод".into(),
-            successful: index % 2 == 0,
-            completed: true,
             status: ExperimentStatus::Completed,
             cancellation_reason: String::new(),
             next_step: String::new(),
@@ -875,7 +947,7 @@ fn cancelling_an_experiment_requires_a_reason_and_is_not_a_failure() {
         })
         .unwrap();
     assert_eq!(state.experiments[0].status, ExperimentStatus::Cancelled);
-    assert!(state.experiments[0].completed);
+    assert_eq!(state.experiments[0].status, ExperimentStatus::Cancelled);
 }
 
 #[test]

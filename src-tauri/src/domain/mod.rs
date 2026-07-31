@@ -46,7 +46,6 @@ pub struct Book {
     pub study_cycles: Vec<StudyCycle>,
     pub archived: bool,
     pub reading_completed: bool,
-    pub study_completed: bool,
     pub retrospective: Option<Retrospective>,
 }
 
@@ -129,7 +128,6 @@ pub enum StudyStatus {
     ReadyToComplete,
     Completed,
     Repeating,
-    Archived,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize, TS)]
@@ -245,8 +243,6 @@ pub struct Experiment {
     pub action: String,
     pub result: String,
     pub conclusion: String,
-    pub successful: bool,
-    pub completed: bool,
     pub status: ExperimentStatus,
     pub cancellation_reason: String,
     pub next_step: String,
@@ -434,6 +430,9 @@ pub enum LibraryAction {
         draft_id: String,
         idea_id: String,
     },
+    DeferDraft {
+        draft_id: String,
+    },
     DiscardDraft {
         draft_id: String,
     },
@@ -483,7 +482,6 @@ pub enum LibraryAction {
         action: String,
         result: String,
         conclusion: String,
-        successful: bool,
     },
     AdvanceExperiment {
         experiment_id: String,

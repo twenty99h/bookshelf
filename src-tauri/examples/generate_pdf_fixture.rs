@@ -10,8 +10,17 @@ fn main() {
     let font_id = document.add_object(dictionary! {
         "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica", "Encoding" => "WinAnsiEncoding",
     });
-    let resources_id =
-        document.add_object(dictionary! { "Font" => dictionary! { "F1" => font_id } });
+    let image_id = document.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Image", "Width" => 2, "Height" => 2,
+            "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8,
+        },
+        vec![214, 162, 74, 91, 86, 194, 91, 86, 194, 214, 162, 74],
+    ));
+    let resources_id = document.add_object(dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+        "XObject" => dictionary! { "Im1" => image_id },
+    });
     let mut page_ids = Vec::new();
     for index in 0..10 {
         let crossing = if index == 4 {
@@ -21,31 +30,56 @@ fn main() {
         } else {
             "Deterministic bookshelf fixture."
         };
-        let text = format!(
-            "Chapter {}: repeated search phrase leader replication. {} {}",
-            index + 1,
+        let mut operations = vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 20.into()]),
+            Operation::new("Td", vec![72.into(), 760.into()]),
+            Operation::new(
+                "Tj",
+                vec![Object::string_literal(format!(
+                    "Chapter {}: Reliable replication",
+                    index + 1
+                ))],
+            ),
+            Operation::new("ET", vec![]),
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 12.into()]),
+            Operation::new("TL", vec![22.into()]),
+            Operation::new("Td", vec![72.into(), 710.into()]),
+        ];
+        for line in [
+            "Repeated search phrase: leader replication and explicit ownership.",
+            "A deterministic text layer keeps selection and search reproducible.",
             crossing,
-            "compressed text layer ".repeat(20)
-        );
-        let content = Content {
-            operations: vec![
-                Operation::new("BT", vec![]),
-                Operation::new("Tf", vec!["F1".into(), 12.into()]),
-                Operation::new("Td", vec![72.into(), (720 - index * 40).into()]),
-                Operation::new(
-                    "TJ",
-                    vec![Object::Array(vec![
-                        Object::string_literal(text),
-                        (-25).into(),
-                    ])],
-                ),
-                Operation::new("ET", vec![]),
-                Operation::new("q", vec![]),
-                Operation::new("re", vec![72.into(), 540.into(), 220.into(), 90.into()]),
-                Operation::new("S", vec![]),
-                Operation::new("Q", vec![]),
-            ],
-        };
+            "The reader preserves the page and the authored source context.",
+            "Failure handling belongs in the model rather than hidden infrastructure.",
+            "A negative result is still a completed practical application.",
+        ] {
+            operations.push(Operation::new("Tj", vec![Object::string_literal(line)]));
+            operations.push(Operation::new("T*", vec![]));
+        }
+        operations.extend([
+            Operation::new("ET", vec![]),
+            Operation::new("q", vec![]),
+            Operation::new("re", vec![72.into(), 430.into(), 220.into(), 90.into()]),
+            Operation::new("S", vec![]),
+            Operation::new("Q", vec![]),
+            Operation::new("q", vec![]),
+            Operation::new(
+                "cm",
+                vec![
+                    100.into(),
+                    0.into(),
+                    0.into(),
+                    60.into(),
+                    330.into(),
+                    445.into(),
+                ],
+            ),
+            Operation::new("Do", vec!["Im1".into()]),
+            Operation::new("Q", vec![]),
+        ]);
+        let content = Content { operations };
         let mut stream = Stream::new(dictionary! {}, content.encode().unwrap());
         stream.compress().unwrap();
         let content_id = document.add_object(stream);

@@ -6,6 +6,7 @@ import type { CommandError } from "./generated/CommandError";
 import type { DraftNote } from "./generated/DraftNote";
 import type { Experiment } from "./generated/Experiment";
 import type { Idea } from "./generated/Idea";
+import type { ImportPdfResult } from "./generated/ImportPdfResult";
 import type { IdeaAssignment } from "./generated/IdeaAssignment";
 import type { IdeaLink } from "./generated/IdeaLink";
 import type { IdeaRelation } from "./generated/IdeaRelation";
@@ -35,6 +36,7 @@ export type {
   DraftNote,
   Experiment,
   Idea,
+  ImportPdfResult,
   IdeaAssignment,
   IdeaLink,
   IdeaRelation,
@@ -62,8 +64,8 @@ export async function loadLibrary(): Promise<LibraryState> {
 export async function executeLibraryAction(action: LibraryAction): Promise<LibraryState> {
   return invoke<LibraryState>("execute_library_action", { action });
 }
-export async function importPdf(path: string, title = ""): Promise<LibraryState> {
-  return invoke<LibraryState>("import_pdf", { path, title });
+export async function importPdf(path: string, title = ""): Promise<ImportPdfResult> {
+  return invoke<ImportPdfResult>("import_pdf", { path, title });
 }
 export async function searchLibrary(query: string): Promise<SearchResult[]> {
   return invoke<SearchResult[]>("search_library", { query });
