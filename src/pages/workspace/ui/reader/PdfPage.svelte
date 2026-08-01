@@ -25,6 +25,7 @@
 
   let renderTask: RenderTask | null = null;
   let error = $state("");
+  let ready = $state(false);
 
   function renderPage(node: HTMLElement) {
     const pdf = document;
@@ -46,6 +47,7 @@
   ) {
     try {
       error = "";
+      ready = false;
       const pdfjs = await import("pdfjs-dist");
       const pdfPage = await pdf.getPage(pageNumber);
       const viewport = pdfPage.getViewport({ scale });
@@ -72,6 +74,7 @@
         targetTextLayer,
         sources.map((source) => source.fragment),
       );
+      ready = true;
     } catch (cause) {
       if (cause instanceof Error && cause.name !== "RenderingCancelledException") error = cause.message;
     }
@@ -113,6 +116,7 @@
   class:invert={mode === "dark"}
   class:[&_canvas]:invert={mode === "dark" && !invertImages}
   data-pdf-page={page}
+  aria-busy={!ready}
   aria-label="Страница {page}"
   {@attach renderPage}
 >
