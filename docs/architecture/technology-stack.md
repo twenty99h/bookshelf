@@ -7,7 +7,7 @@
 | Desktop runtime | Tauri 2, стабильный Rust toolchain | Окно приложения, IPC, упаковка и системные возможности |
 | Frontend | Svelte 5, TypeScript в strict mode, Vite, pnpm | Интерфейс и локальное состояние взаимодействия |
 | UI | Bits UI, Tailwind CSS 4, Lucide Svelte | Доступные headless-примитивы и собственная система компонентов без hosted-ресурсов |
-| Навигация | Типизированный стек экранов на Svelte state | Desktop-навигация без URL-router, пока не нужны deep links |
+| Навигация | SvelteKit file-based routes и тонкие route entries | Восстанавливаемые адреса рабочих контекстов при сохранении экранной логики в FSD pages |
 | Асинхронное состояние | Page-local Svelte 5 state | Атомарная замена полного снимка после Rust-команд без отдельного кеша |
 | Формы | Svelte 5 state и нативные ограничения | Интерактивная валидация ввода до отправки команды без отдельного form framework |
 | PDF | `pdfjs-dist` и собственный Svelte viewer | Отображение, оглавление, поиск, выделение и восстановление позиции |
@@ -17,7 +17,7 @@
 | Codex | Bundled `codex` binary как Tauri sidecar | ChatGPT-вход и проверки через `codex app-server` по JSONL/stdin/stdout |
 | Переносимый архив | Кандидат: tar + zstd внутри passphrase-encrypted age stream | Потоковая упаковка PDF и состояния с проверяемым шифрованием |
 | Системные функции | Официальные Tauri plugins: dialog, notification, updater, shell | Только минимально необходимые платформенные адаптеры |
-| Проверки | Cargo test, Vitest, Testing Library for Svelte, production builds | Rust, frontend, контракты адаптеров и собираемость desktop-приложения |
+| Проверки | Cargo test, Vitest, Testing Library for Svelte, Playwright, production builds | Rust, frontend, визуальные E2E, контракты адаптеров и собираемость desktop-приложения |
 | Качество | rustfmt, Clippy, `svelte-check`, ESLint, Prettier | Единообразное форматирование и статические проверки |
 
 Версии инструментов фиксируются через `rust-toolchain.toml`, `packageManager` и поддерживаемую версию Node; точные версии зависимостей — в `Cargo.lock` и `pnpm-lock.yaml`. Обновления выполняются отдельно и осознанно, а не попутно с рефакторингом.
@@ -53,6 +53,8 @@ Frontend владеет только представлением и незав�
 - состояние выделения текста в текущем PDF;
 - отображение progress и потоковых событий Codex;
 - optimistic UI только там, где операция безопасно откатывается.
+
+SvelteKit route-файлы остаются тонкими входами и импортируют экранную композицию только через публичный `index.ts` соответствующего FSD page slice. Общий shell и route layouts принадлежат `app`; reader использует отдельный distraction-free layout без основной навигации. Это решение заменяет прежний state-only стек экранов согласно ADR-0008.
 
 Page-local session-модуль владеет `$state.raw<LibraryState>`, типизированной навигацией, общими loading/error-состояниями и последовательным выполнением изменяющих команд. Состояние конкретной формы остаётся в её локальном компоненте. Компоненты получают только нужные данные и предметные callbacks, а не весь снимок и универсальный dispatch; глобальный frontend-store не вводится.
 
@@ -141,7 +143,7 @@ Tauri updater принимает только подписанные обнов�
 - Чистые правила и application-сценарии проверяются Rust unit tests без Tauri runtime.
 - SQLite-адаптер проверяется интеграционными тестами на временной реальной базе, включая миграции, FTS5, backup и восстановление после сбоя.
 - Svelte-сценарии проверяются Vitest и Testing Library for Svelte через явно внедрённый fake-адаптер команд; тесты не мокают низкоуровневый Tauri `invoke`.
-- Полноценная WebdriverIO/Tauri E2E-инфраструктура отложена и не входит в текущий рефакторинг; production frontend и Tauri build остаются обязательными проверками собираемости.
+- Playwright запускает browser E2E через детерминированный test adapter, использует Page Object Model и утверждённые скриншоты при `1920×1080`; небольшой набор невизуальных инвариантов и keyboard-only сценарий дополняют визуальные проверки. Реальная интеграция Codex всегда заменяется mock-ответами; отдельные нативные smoke-тесты проверяют только границу Tauri, импорт PDF и восстановление состояния.
 - Корпус PDF включает колонки, листинги, формулы, разные embedded fonts, неправильный text order, повреждённое оглавление и большой файл.
 - Быстрые frontend и Rust-проверки выполняются на Linux, Windows также проверяет Rust и production Tauri build; Windows, macOS и Linux проверяются для release candidate.
 - Большой синтетический снимок контролирует корректность snapshot-модели и собирает размер/время без нестабильного жёсткого порога миллисекунд в CI.
